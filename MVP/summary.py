@@ -14,20 +14,20 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from tavily import TavilyClient
 
-# Hardcoded for the MVP. Edition/season selection is a later version's job.
-EDITION = "Poland"
-SEASON = 1
+# Defaults for CLI use. The API (app.py) passes edition/season explicitly per request.
+DEFAULT_EDITION = "Poland"
+DEFAULT_SEASON = 1
 
 
-def fetch_sources(episode: int) -> list[dict]:
+def fetch_sources(edition: str, season: int, episode: int) -> list[dict]:
     """Run a few targeted Tavily searches and return raw results (title, url, content)."""
     tavily = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
     queries = [
-        (f"Love is Blind Poland season {SEASON} cast participants ages professions", 8),
-        (f"Love is Blind Poland season {SEASON} episode {episode} recap", 5),
-        (f"Love is Blind Poland season {SEASON} drama so far", 5),
-        (f"Love is Blind Poland season {SEASON} episode {episode} fan reaction discussion", 5),
+        (f"Love is Blind {edition} season {season} cast participants ages professions", 8),
+        (f"Love is Blind {edition} season {season} episode {episode} recap", 5),
+        (f"Love is Blind {edition} season {season} drama so far", 5),
+        (f"Love is Blind {edition} season {season} episode {episode} fan reaction discussion", 5),
     ]
 
     results = []
@@ -80,12 +80,12 @@ def log_sources(sources: list[dict], context: str, episode: int) -> None:
     print(f"Full fetched content saved to {log_path}\n")
 
 
-def generate_recap(episode: int, context: str) -> dict:
+def generate_recap(edition: str, season: int, episode: int, context: str) -> dict:
     """Single LLM call: generate the structured, spoiler-bounded recap."""
     client = OpenAI()
 
     system_prompt = f"""You are a comic, dramatic soap-opera narrator writing a "previously on"
-recap for the reality show Love Is Blind {EDITION}, Season {SEASON}.
+recap for the reality show Love Is Blind {edition}, Season {season}.
 
 STRICT RULE: only use information about events up to and including episode {episode}.
 Never mention or hint at anything that happens after episode {episode}, even if it
@@ -170,9 +170,9 @@ that was fetched but not used for any claim in this recap must not be listed.
     return json.loads(raw)
 
 
-def print_recap(recap: dict) -> None:
+def print_recap(edition: str, season: int, recap: dict) -> None:
     """Print the recap to terminal in the agreed layout."""
-    print(f"=== Previously On: Love Is Blind {EDITION}, Season {SEASON} ===\n")
+    print(f"=== Previously On: Love Is Blind {edition}, Season {season} ===\n")
 
     print(recap["intro"] + "\n")
 
@@ -212,15 +212,17 @@ def print_recap(recap: dict) -> None:
 def main():
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Generate a Love Is Blind Poland S1 recap.")
+    parser = argparse.ArgumentParser(description="Generate a Love Is Blind recap.")
+    parser.add_argument("--edition", type=str, default=DEFAULT_EDITION, help="e.g. Poland, UK, Germany")
+    parser.add_argument("--season", type=int, default=DEFAULT_SEASON)
     parser.add_argument("--episode", type=int, required=True, help="Last episode watched.")
     args = parser.parse_args()
 
-    sources = fetch_sources(args.episode)
+    sources = fetch_sources(args.edition, args.season, args.episode)
     context = build_context(sources)
     log_sources(sources, context, args.episode)
-    recap = generate_recap(args.episode, context)
-    print_recap(recap)
+    recap = generate_recap(args.edition, args.season, args.episode, context)
+    print_recap(args.edition, args.season, recap)
 
 
 if __name__ == "__main__":
