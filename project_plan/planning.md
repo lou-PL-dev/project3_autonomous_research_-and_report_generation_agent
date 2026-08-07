@@ -45,12 +45,12 @@ As a Love Is Blind viewer, I want to tell my edition, season, and the last episo
 - RAG: Pinecone, chunks tagged by `{edition, season, episode_number, phase}`, retrieval filtered by `edition = user's edition AND season = user's season AND episode_number ≤ cutoff`.
 - Agent framework: LangChain (ReAct tool orchestration) + LangGraph (state management, conditional routing for the spoiler check loop).
 - Orchestration: n8n, webhook trigger → Execute Command node → Python script.
-- Tools/integrations (MCP): TMDB (metadata), YouTube Data API (video discovery + comments), youtube-transcript-api (transcripts), web search API (articles).
+- Tools/integrations (MCP): TMDB (metadata), YouTube Data API (video discovery + comments), web search API (articles).
 
 **Justification**:
 - LangGraph over a simple agent loop: the workflow has a genuine conditional edge (regenerate on spoiler check failure), not just tool calling.
 - Pinecone/RAG: justified by reuse (index once per episode, query repeatedly) and distillation (multiple sources per episode need semantic filtering).
-- YouTube API + youtube-transcript-api over official captions: official caption download requires OAuth and video ownership, which fails for third party videos.
+- YouTube API: Getting comments from video viewers of most viewed video.
 - n8n Execute Command: required by the project rubric; technically it saves writing a small web server, since it gives a webhook endpoint and visual run history for free around the existing Python script.
 
 **Alternatives considered and dropped**:
