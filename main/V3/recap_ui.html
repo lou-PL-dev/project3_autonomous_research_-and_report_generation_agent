@@ -150,17 +150,8 @@ for (let s = 1; s <= 8; s++) {
   seasonSelect.appendChild(opt);
 }
 
-function phaseFor(ep) {
-  if (ep <= 4) return 'Pods';
-  if (ep === 5) return 'Reveal';
-  if (ep <= 7) return 'Honeymoon';
-  if (ep <= 9) return 'Moving In Together';
-  if (ep <= 11) return 'Wedding';
-  return 'Reunion';
-}
-
 function renderRecap(data, episode) {
-  document.getElementById('phase-label').textContent = `PHASE: ${phaseFor(episode)}`;
+  document.getElementById('phase-label').textContent = `PHASE: ${data.phase || 'unknown'}`;
   document.getElementById('intro-text').textContent = data.intro;
   document.getElementById('main-drama').textContent = data.mainDrama;
   document.getElementById('highlights-header').textContent = `HIGHLIGHTS OF THE LAST EPISODE (${data.episodeLabel})`;

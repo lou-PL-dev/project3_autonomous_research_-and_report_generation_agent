@@ -10,6 +10,8 @@ Usage:
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+import csv
+import os
 
 from pipeline import run_pipeline
 
@@ -17,6 +19,23 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+SEASON_INDEX_DIR = os.path.join(os.path.dirname(__file__), "season_indexes")
+
+
+def load_phase_from_season_index(edition: str, season: int, episode: int) -> str | None:
+    if edition.lower() != "poland" or season != 1:
+        return None
+
+    path = os.path.join(SEASON_INDEX_DIR, "poland_s1.csv")
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if int(row["episode"]) == episode:
+                    return row.get("phase") or None
+    except (FileNotFoundError, KeyError, ValueError):
+        return None
+
+    return None
 
 
 def format_audience_reaction(reaction) -> str:
@@ -61,6 +80,7 @@ def reshape_for_frontend(recap: dict) -> dict:
         "intro": recap["intro"],
         "mainDrama": recap["main_drama"],
         "episodeLabel": episode_label,
+        "phase": recap.get("phase"),
         "highlights": [m["text"] for m in moments],
         "audienceReaction": format_audience_reaction(recap["audience_reaction"]),
         "participants": participants,
@@ -77,6 +97,7 @@ def get_recap():
 
     try:
         recap = run_pipeline(edition, season, episode)
+        recap["phase"] = load_phase_from_season_index(edition, season, episode) or recap.get("phase")
         return jsonify(reshape_for_frontend(recap))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
