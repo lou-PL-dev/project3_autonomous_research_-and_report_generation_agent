@@ -2,8 +2,8 @@
 V2 CLI: generate a spoiler-bounded recap using the ReAct planner + source-first RAG pipeline.
 
 Usage:
-    python main/V3/recap.py --episode 6
-    python main/V3/recap.py --edition UK --season 1 --episode 3
+    python recap.py --episode 6
+    python recap.py --edition UK --season 1 --episode 3
 """
 
 import argparse
@@ -29,7 +29,26 @@ def print_recap(edition: str, season: int, recap: dict) -> None:
 
     print("AUDIENCE REACTION")
     reaction = recap["audience_reaction"]
-    print(reaction if reaction else "No fan reaction found in sources for this run.")
+    if isinstance(reaction, dict):
+        print(reaction.get("overall_reception", ""))
+        if reaction.get("liked"):
+            print("\nWhat fans liked:")
+            for item in reaction["liked"]:
+                print(f"  - {item}")
+        if reaction.get("criticism"):
+            print("\nPoints of criticism:")
+            for item in reaction["criticism"]:
+                print(f"  - {item}")
+        if reaction.get("themes"):
+            print("\nNotable fan themes:")
+            for item in reaction["themes"]:
+                print(f"  - {item}")
+        if reaction.get("sample_quotes"):
+            print("\nSample reactions:")
+            for q in reaction["sample_quotes"]:
+                print(f"  - \"{q.get('text', '')}\" ({q.get('context', '')})")
+    else:
+        print(reaction if reaction else "No fan reaction found in sources for this run.")
     print()
 
     print("PARTICIPANTS")

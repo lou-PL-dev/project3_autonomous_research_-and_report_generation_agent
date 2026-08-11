@@ -1,95 +1,203 @@
-# V3: ReAct planner + source-first RAG + multi-edition metadata
+# V3: ReAct planner + source-first RAG + structured metadata + fan reaction
 
-Builds on V2 unchanged, plus:
-- `season_indexes/imdb_ids.csv` and `tmdb_ids.csv` now cover all 12 current Love Is
-  Blind editions (US, Poland, Brazil, Japan, Sweden, UK, Mexico, Habibi, Argentina,
-  Germany, France, Italy), not just Poland. `fetch_show_metadata` (OMDb episode
-  titles + TMDB per-episode participants) now works out of the box for any of them.
-- TMDB per-episode participant supplementation (hosts + contestants, cross-referenced
-  with the cast CSV for age/profession), added to `PARTICIPANTS` after generation,
-  skipped during the Pods-phase placeholder to preserve spoiler safety.
+Autonomous recap agent for Love Is Blind. Given an edition, season, and the last
+episode watched, it researches, retrieves, and generates a narrator-voiced,
+spoiler-bounded recap, structured metadata and ground-truth data steer the
+research and correct the output, a dedicated spoiler-check node audits the
+result before it's shown.
 
-**Still Poland-only**: `poland_s1.csv` (episode/phase index) and `poland_s1_cast.csv`
-(ages/professions) are the only hand-verified ground-truth files that exist. Every
-other edition will run, OMDb/TMDB metadata will work, but `main_drama`/`highlights`
-quality for non-Poland editions depends entirely on what the ReAct planner finds via
-search, the same reliability profile V2 had before the Poland ground-truth files
-were built. Adding a `<edition>_s<season>.csv` and `<edition>_s<season>_cast.csv`
-for another edition brings it up to the same quality level.
+## Architecture
 
-Runs on port 5004 (V2 uses 5003), so both can coexist if needed.
+```
+                              USER
+                               │
+                    edition, season, last episode watched
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  FETCH SHOW METADATA │   ← OMDb + TMDB (structured, not RAG)
+                    └──────────┬───────────┘
+                               │  canonical episode titles (OMDb)
+                               │  per-episode participants (TMDB)
+                               ▼
+                    ┌─────────────────────┐
+                    │   RESEARCH AGENT      │   ← ReAct agent (LangGraph)
+                    │   (plan_and_search)   │     decides its own search queries
+                    └──────────┬───────────┘
+                               │  web sources, each tagged with an
+                               │  episode range (regex + title match)
+                               ▼
+                    ┌─────────────────────┐
+              ┌────▶│  SEASON INDEX LOAD    │   ← hand-verified ground truth
+              │     │ (episodes + cast CSV) │     (bypasses the research agent)
+              │     └──────────┬───────────┘
+              │                │
+              │                ▼
+              │     ┌─────────────────────┐
+              └────▶│   RANK & SELECT       │   ← per-need budgets (bios/highlights/
+                    │ (source-first RAG)    │     drama/reaction), not one shared race
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ FETCH YOUTUBE          │   ← only videos whose ENTIRE range
+                    │ COMMENTS               │     is ≤ cutoff (confirmed necessary
+                    └──────────┬───────────┘     via real spoiler-leak test)
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   SOURCE INDEX         │  ← chunk, tag (episode + phase), embed
+                    │   (Pinecone)           │
+                    └──────────┬───────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │      RETRIEVAL         │
+                    └──────────┬───────────┘
+          ┌────────┬───────────┼──────────┐
+          ▼         ▼          ▼          ▼
+        BIOS      DRAMA     EPISODE    REACTION
+          │         │          │          │
+          │         │          │          ▼
+          │         │          │   ┌─────────────────┐
+          │         │          │   │  FAN REACTION     │
+          │         │          │   │  ANALYSIS         │
+          │         │          │   └────────┬──────────┘
+          └─────────┴──────────┴────────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │      GENERATE          │
+                    └──────────┬───────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │   SPOILER CHECK          │──┐
+                    └──────────┬───────────┘  │ fail: retry with
+                               │ pass          │ specific issue fed back
+                               ▼               │
+                      "Previously On..."◀──────┘
+```
 
-A rebuild, not a patch on V1. Core idea: rank sources by temporal fit to the user's
-cutoff *before* chunking anything, using deterministic title-based episode extraction,
-and use a real LangChain/LangGraph ReAct agent to decide search strategy instead of
-four fixed queries every run.
+## Node-by-node logic
 
-## Why this exists
+**FETCH SHOW METADATA** — Structured metadata, not a RAG source. OMDb supplies
+canonical episode titles (used both to sharpen search queries and to match
+sources that name an episode by title rather than number). TMDB supplies the
+real per-episode cast list (hosts + contestants), used later to correct and
+enrich the generated participant list. Both cover all 12 current editions via
+`season_indexes/imdb_ids.csv` and `tmdb_ids.csv`, one entry per edition since
+IMDb/TMDB use a single series ID across all seasons of an edition.
 
-V1 kept losing precise, single-episode sources to broader ones in retrieval, purely
-because the broader source had more semantic mass, not because it was more relevant.
-The root cause: episode coverage was only known *after* chunking and LLM tagging,
-by which point the wrong source had already won. V2 fixes this by extracting episode
-coverage from titles with regex, for free, before any chunking, and using that as the
-primary ranking signal.
+**RESEARCH AGENT** (`plan_and_search`) — A real LangChain/LangGraph ReAct agent,
+not a fixed set of queries. It decides what to search for (cast bios, early-season
+drama, this-episode-only content, fan reaction) and issues its own queries,
+adapting based on what it finds. Every discovered source gets a deterministic
+episode range: first a regex pass on the title (catches "Episode 6", "Episodes
+6-9", "S1E6"), falling back to matching the source's title against OMDb's real
+episode titles when no number is present in the text at all.
 
-## What changed from V1
+**SEASON INDEX LOAD** — Hand-verified ground truth (episode/phase milestones,
+cast ages/professions), loaded independently of the research agent, so it's
+never subject to search variance. Only rows up to the user's cutoff are ever
+loaded into memory, a spoiler floor independent of anything downstream.
 
-- **`node_plan_and_search`**: a real ReAct agent (`langgraph.prebuilt.create_react_agent`)
-  decides what to search for, given the four evidence needs (bios, season drama, this
-  episode, fan reaction), rather than running the same four fixed queries every time.
-- **`extract_episode_range_from_title()`**: regex-based, catches "Episode 6",
-  "Episodes 6-9", "Eps. 6-8", "S1E6", etc. Runs before any LLM call.
-- **`temporal_fit()`**: scores every discovered source against the user's cutoff.
-  Sources entirely past the cutoff (`fit < 0`) are excluded outright, before they can
-  contribute a single chunk.
-- **`node_rank_and_select`**: source-first selection. Chunking, tagging, and embedding
-  only happen for the top `MAX_SELECTED_SOURCES` (12) by temporal fit, not everything
-  the search turned up.
-- **Title-derived range wins over LLM-tagged range** when both exist (`node_index`),
-  the LLM tagger is now a fallback only for sources the title regex couldn't resolve.
+**RANK & SELECT** — The core fix underpinning V2/V3: bios, highlights, drama,
+and reaction each get their own guaranteed selection budget, instead of one
+shared ranking where episode-precise sources always beat general or
+reaction-oriented ones for a shared pool of slots. Ground-truth sources are
+included unconditionally, on top of this, never competing for a budget slot.
 
-## What's unchanged (proven in V1, not broken)
+**FETCH YOUTUBE COMMENTS** — Only pulls comments from a video whose *entire*
+tagged episode range is within the user's cutoff, not just "mostly" watched.
+Confirmed necessary with real test data: a range video's comments can leak
+later-episode content without ever naming an episode number (a wedding-dress
+detail from a future episode surfaced in a "6-9" video's comment section, with
+cutoff at 6).
 
-- Pinecone RAG with range-based metadata filtering (`episode_start`/`episode_end`)
-- Phase-based `main_drama` filtering (phases up to and including the resolved current
-  phase), with the "unknown phase" chunks getting a safety-net inclusion only when
-  their own episode range is independently spoiler-safe
-- The four-section retrieve design (bios / season drama / this episode / reaction)
-- The full grounding + tone prompt, and the false-positive-resistant spoiler-check
-  rules from V1's later debugging
-- Noise/general-domain/wrong-edition filtering (TikTok, Spotify, Wikipedia-other-season, etc.)
+**SOURCE INDEX** — Chunking (with a hard per-chunk size cap so no chunk can
+exceed the embedding model's token limit), episode + phase tagging via batched
+LLM calls (capped batch size for reliability), embedding into Pinecone. Each
+edition/season gets its own namespace, cleared at the start of every run so
+stale data from earlier runs or earlier bugs can't silently leak into results.
+
+**RETRIEVAL** — Four independent, purpose-specific queries, not one blended
+query serving every need. `main_drama` is filtered to strictly *before* the
+current phase (the current episode's content belongs to `highlights`, not
+`main_drama`). `highlights` requires the chunk's episode range to actually
+contain the target episode. `bios` and `reaction` pull from general/background
+content, with ground-truth chunks pulled by direct metadata filter rather than
+competing on semantic similarity against much larger web transcripts.
+
+**FAN REACTION ANALYSIS** — Synthesizes the pre-filtered, already spoiler-safe
+comments into a structured summary: overall reception, what fans liked,
+criticism, recurring themes, and a handful of short, paraphrased sample
+reactions (never long verbatim quotes). Only runs when eligible comments exist.
+
+**GENERATE** — The full grounding/tone prompt (conversational, hyped narrator
+voice, strict "never state a claim not in the context" rule). After generation:
+TMDB's participant data merges in and *corrects* (not just appends to) whatever
+the model guessed, e.g. a vague "Filip" with a wrong profession becomes the
+correctly disambiguated "Filip Lenz" with his real age and job. Structured fan
+reaction data overrides the model's own weaker synthesis when available.
+Non-clickable internal ground-truth "sources" are stripped from the visible
+citation list before the user ever sees them.
+
+**SPOILER CHECK** — Audits the complete draft after generation. On failure, the
+specific issue found is fed back into one bounded retry of `generate`, not a
+blind re-roll. Explicit rules distinguish dramatic-but-in-bounds content
+(safe) from a specific fact about a later episode (a real spoiler), since
+early testing showed the auditor was prone to false positives on the former.
+
+## What's ground-truth vs. inferred, at a glance
+
+| Data | Source | Reliability |
+|---|---|---|
+| Episode titles | OMDb | Structured, always available for the 12 covered editions |
+| Per-episode cast | TMDB | Structured, confirmed accurate against real episode data |
+| Episode/phase milestones | Hand-verified CSV | Only exists for Poland S1 currently |
+| Cast ages/professions | Hand-verified CSV | Only exists for Poland S1 currently |
+| Plot detail, drama, highlights | Web search (Tavily), ReAct-directed | Variable, depends on what the agent finds each run |
+| Fan reaction | YouTube comments, range-gated | Variable, only as good as what's in eligible videos' comments |
 
 ## Setup
 
 ```bash
-cd v2
-pip install python-dotenv openai tavily-python pinecone langgraph langchain-openai langchain-core flask flask-cors
+cd V3
+pip install python-dotenv openai tavily-python pinecone langgraph langchain-openai langchain-core flask flask-cors requests
 ```
 
-`.env` needs the same three keys as V1: `OPENAI_API_KEY`, `TAVILY_API_KEY`, `PINECONE_API_KEY`.
+`.env` needs:
+```
+OPENAI_API_KEY=...
+TAVILY_API_KEY=...
+PINECONE_API_KEY=...
+OMDB_API_KEY=...          (or OMBD_API_KEY)
+TMDB_API_KEY=...
+YOUTUBE_API_KEY=...
+```
 
 ## Run it
 
+**CLI:**
 ```bash
 python recap.py --episode 6
 ```
 
-or the UI:
+**UI:**
 ```bash
-python app.py          # localhost:5003
-open recap_ui.html
+python app.py          # localhost:5004
+open recap_ui.html      # separate terminal
 ```
 
-## Known unknowns going into this
+## Known limitations
 
-- **Not yet run end to end against the API.** The regex extraction and temporal-fit
-  scoring were unit-tested against real titles from V1's session tonight (all correct),
-  but the ReAct agent's actual search behavior, tool-call count, query quality, is
-  unverified until it's run for real.
-- **`MAX_SELECTED_SOURCES = 12` is a guess**, not measured. May need tuning once you see
-  how many genuinely distinct, well-covering sources the planner tends to find.
-- **The ReAct agent could under- or over-search.** Nothing currently caps how many tool
-  calls it makes, worth watching for runaway cost on the first real run.
-- **Same single-source (Tavily) constraint as V1.** ReAct matters more once TMDB/YouTube
-  give the agent an actual choice between tools, not just query phrasing.
+- **Only Poland Season 1 has hand-verified ground-truth files.** Every other
+  edition will run, OMDb/TMDB metadata works for all 12, but `main_drama` and
+  `highlights` quality for other editions depends entirely on what the ReAct
+  agent finds via search, the same reliability profile this pipeline had before
+  the Poland ground-truth files existed.
+- **Search-result variance is real and unresolved.** The same query can surface
+  different sources run to run, `highlights` in particular sometimes gets zero
+  dedicated single-episode sources, though it degrades gracefully by falling
+  back to range-tagged content rather than failing outright.
+- **Fan reaction depends on eligible YouTube videos existing.** If no video's
+  entire range is within the user's cutoff, `audience_reaction` falls back to
+  a much weaker string generated from general web "reaction"-labeled content.

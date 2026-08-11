@@ -1,5 +1,6 @@
 """
-V2: source-first RAG with a real ReAct planner agent.
+V3: source-first RAG with a real ReAct planner agent, multi-edition structured
+metadata (OMDb + TMDB), and TMDB-supplemented participants.
 
 Core architectural change from V1: instead of running 4 fixed queries and chunking
 everything fetched, a ReAct agent decides what searches are needed, episode ranges
@@ -14,7 +15,15 @@ the four-section retrieve design (bios/drama/this_episode/reaction), the full
 grounding/tone prompt, and the LLM spoiler-check with its false-positive-resistant
 rules from tonight's fixes.
 
-Multi source (Tavily, OMBD, TMBD and YOUTUBE)
+New in V3: OMDb supplies canonical episode titles (used both for source discovery and
+as a title-matching fallback), and TMDB supplies real per-episode participant lists
+(hosts + contestants), used to supplement the model's own participant extraction and
+cross-referenced with the hand-verified cast CSV for age/profession. Both cover all 12
+current Love Is Blind editions via season_indexes/imdb_ids.csv and tmdb_ids.csv.
+
+Sources are still web search (Tavily) only, YouTube comment data (for real audience
+reaction, not just whatever a recap video happens to mention) is planned next, not yet
+integrated.
 
 Usage (CLI):
     python recap.py --episode 6
@@ -311,10 +320,12 @@ class RecapState(TypedDict):
     episode: int
     phase: str
     episode_titles: dict[int, str]
-    tmdb_participants: dict[str, str]
+    tmdb_participants: dict[int, list[dict]]
     raw_sources: list[dict]
     ground_truth_sources: list[dict]
     selected_sources: list[dict]
+    youtube_comments: list[dict]
+    fan_reaction_analysis: dict | None
     chunks: list[dict]
     context: str
     draft: dict
@@ -360,9 +371,13 @@ def node_fetch_show_metadata(state: RecapState) -> dict:
             print(f"[omdb] request failed ({e}), continuing without it")
 
     # --- TMDB: real per-episode participants (hosts + contestants), used as a
-    # SUPPLEMENT to whatever generation finds, fetched once here for every
-    # episode up to cutoff so it's ready by the time participants get finalized.
-    tmdb_participants: dict[str, str] = {}  # name -> role, deduped across episodes
+    # SUPPLEMENT to whatever generation finds. Kept PER-EPISODE (not flattened
+    # across the whole range), episode N's guest_stars are exactly the people
+    # still active in the story at that point, confirmed directly: episode 6's
+    # list is precisely the 5 couples still in play, nobody who dropped out
+    # earlier. Flattening 1-N together would reintroduce everyone who was ever
+    # on screen, which is not what a recap's current participant list should be.
+    tmdb_participants: dict[int, list[dict]] = {}
     tmdb_id = load_tmdb_id(edition)
     tmdb_key = os.getenv("TMDB_API_KEY")
     if not tmdb_id:
@@ -371,12 +386,12 @@ def node_fetch_show_metadata(state: RecapState) -> dict:
         print("[tmdb] no TMDB_API_KEY found, skipping")
     else:
         for ep in range(1, episode + 1):
-            people = fetch_tmdb_episode_participants(tmdb_id, season, ep, tmdb_key)
-            for person in people:
-                tmdb_participants[person["name"]] = person["role"]
-        print(f"[tmdb] fetched {len(tmdb_participants)} unique participants across episodes 1-{episode}")
-        for name, role in tmdb_participants.items():
-            print(f"    - {name} ({role})")
+            tmdb_participants[ep] = fetch_tmdb_episode_participants(tmdb_id, season, ep, tmdb_key)
+        current_ep_people = tmdb_participants.get(episode, [])
+        print(f"[tmdb] fetched participants for episodes 1-{episode}, "
+              f"episode {episode} itself has {len(current_ep_people)}:")
+        for person in current_ep_people:
+            print(f"    - {person['name']} ({person['role']})")
 
     return {"episode_titles": episode_titles, "tmdb_participants": tmdb_participants}
 
@@ -679,6 +694,72 @@ Return ONLY a JSON array, no markdown fences:
     return {(t["source_index"], t["chunk_index"]): t for t in tags if "source_index" in t and "chunk_index" in t}
 
 
+# ---------------------------------------------------------------------------
+# Node: fetch_youtube_comments — real fan reaction data, strictly range-gated.
+# Confirmed via manual testing: comments rarely name a specific episode number,
+# but a range video's comments can still reference later-episode content
+# implicitly (e.g. wedding dress shopping details from episode 8 showing up in
+# an "Episodes 6-9" video's comments with cutoff=6). Only videos whose ENTIRE
+# tagged range is <= cutoff are safe, a partial-range video is not, even
+# though "most" of it was already watched.
+# ---------------------------------------------------------------------------
+
+def extract_youtube_video_id(url: str) -> str | None:
+    m = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", url)
+    return m.group(1) if m else None
+
+
+def fetch_video_comments(video_id: str, api_key: str, max_results: int = 20) -> list[dict]:
+    try:
+        response = requests.get(
+            "https://www.googleapis.com/youtube/v3/commentThreads",
+            params={"part": "snippet", "videoId": video_id, "maxResults": max_results, "order": "relevance", "key": api_key},
+            timeout=10,
+        )
+        data = response.json()
+    except requests.RequestException:
+        return []
+    if response.status_code != 200:
+        return []
+    comments = []
+    for item in data.get("items", []):
+        snippet = item["snippet"]["topLevelComment"]["snippet"]
+        comments.append({"text": snippet.get("textDisplay", ""), "likes": snippet.get("likeCount", 0)})
+    return comments
+
+
+def node_fetch_youtube_comments(state: RecapState) -> dict:
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    if not api_key:
+        print("[youtube] no YOUTUBE_API_KEY found, skipping comment fetch")
+        return {"youtube_comments": []}
+
+    episode = state["episode"]
+    all_comments = []
+    for source in state["selected_sources"]:
+        url = source.get("url", "")
+        if "youtube.com" not in url and "youtu.be" not in url:
+            continue
+        ep_start, ep_end = source.get("episode_start"), source.get("episode_end")
+        # Entire range must be known and <= cutoff, a general (-1) or
+        # partial-range-past-cutoff video is not safe, per confirmed test data.
+        if ep_start is None or ep_end is None or ep_start < 0 or ep_end > episode:
+            continue
+        video_id = extract_youtube_video_id(url)
+        if not video_id:
+            continue
+        comments = fetch_video_comments(video_id, api_key)
+        for c in comments:
+            c["source_title"] = source["title"]
+            c["source_url"] = url
+        all_comments.extend(comments)
+        print(f"[youtube] fetched {len(comments)} comments from ep {ep_start}-{ep_end}: {source['title']}")
+
+    if not all_comments:
+        print("[youtube] no eligible (fully <= cutoff) YouTube sources with comments found")
+    return {"youtube_comments": all_comments}
+
+
 def node_index(state: RecapState) -> dict:
     client = OpenAI()
     pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
@@ -770,6 +851,97 @@ def node_index(state: RecapState) -> dict:
 
     print(f"[index] {len(all_chunks)} chunks tagged and upserted")
     return {"chunks": all_chunks}
+
+
+# ---------------------------------------------------------------------------
+# Node: analyze_fan_reaction — synthesizes raw comments into structured form.
+# Only runs on comments already gated to fully-within-cutoff videos, so this
+# node's job is synthesis quality, not spoiler filtering, that's handled
+# upstream. spoiler_check still audits the final result as a second layer.
+# ---------------------------------------------------------------------------
+
+def node_analyze_fan_reaction(state: RecapState) -> dict:
+    comments = state.get("youtube_comments", [])
+    if not comments:
+        print("[fan_reaction] no comments available, skipping analysis")
+        return {"fan_reaction_analysis": None}
+
+    client = OpenAI()
+    edition, season, episode = state["edition"], state["season"], state["episode"]
+    comments_text = "\n".join(f"({c['likes']} likes) {c['text'][:400]}" for c in comments)
+
+    # Pull just the episode-specific section from retrieval so the synthesis
+    # model knows what actually happened, without this it has no way to tell
+    # a plot-relevant reaction from an off-topic tangent in the comments.
+    context = state.get("context", "")
+    episode_section_marker = f"EPISODE {episode} SPECIFIC EVENTS"
+    episode_context = ""
+    if episode_section_marker in context:
+        start = context.index(episode_section_marker)
+        line_end = context.index("\n", start)
+        end = context.find("===", line_end)
+        episode_context = context[line_end:end if end != -1 else len(context)][:3000]
+
+    prompt = f"""You are the SAME comic, hyped soap-opera narrator writing the rest of this
+"previously on" recap for Love Is Blind {edition} Season {season}, episode {episode}. This
+section covers what fans are saying, but it should sound like you, not like a neutral
+analyst writing a report. Write like an excited friend gossiping about what the comment
+section is saying, conversational and casual, not clinical.
+
+Here is what actually happened in this episode, use this to judge whether a comment is
+actually about the show or just tangential chatter:
+{episode_context or "(no episode-specific context available)"}
+
+Comments:
+{comments_text}
+
+Return ONLY valid JSON, no markdown fences:
+{{
+  "overall_reception": "string, one or two hyped, conversational sentences on overall sentiment, tied to specific events when possible, written like you're catching a friend up, not summarizing a survey",
+  "liked": ["string, phrased like you're excitedly telling a friend what people are loving"],
+  "criticism": ["string, phrased the same conversational way, not a formal complaint list"],
+  "themes": ["string, a recurring theme or debate, told with personality, not a bland label"],
+  "sample_quotes": [{{"text": "string, a SHORT paraphrase or fragment (under 15 words), never a full comment reproduced verbatim", "context": "string, one short phrase on why this reaction stood out"}}]
+}}
+
+CRITICAL RULES:
+- Match the tone: excited, a little dramatic, conversational, ALL CAPS or an exclamation point
+  here and there where it actually fits, the same voice as the rest of this recap. Not a
+  formal report, not "viewers expressed mixed sentiments regarding..."
+- Avoid flowery vocabulary (whirlwind, swirling, tangled web(s), rollercoaster, tapestry, saga,
+  riveting, utterly, ablaze).
+- Every entry in "liked", "criticism", "themes", and "sample_quotes" must reference a SPECIFIC
+  named person, event, or moment, either from the episode context above or clearly stated in
+  the comment itself. Do not write vague generic reactions like "some viewers enjoyed it while
+  others found it awkward", that tells the reader nothing.
+- If a comment goes off on a tangent unrelated to the show itself (e.g. general cultural trivia,
+  a side conversation about geography or demographics not tied to anything that happened on
+  screen), EXCLUDE it entirely. Do not surface a bare topic label like "Chicago" without
+  explaining, in the same entry, exactly how it connects to something in the episode, if it
+  can't be clearly connected, leave it out rather than mention it vaguely.
+- Ground everything in what the comments actually say, do not invent reactions.
+- 3 to 5 entries each for "liked", "criticism" (if present), "themes", and "sample_quotes". If
+  fewer than 3 genuinely specific, well-grounded entries exist for a category, return fewer
+  rather than padding with vague ones.
+- If there's genuinely no criticism in the comments, return an empty list for "criticism".
+- Do not reveal anything from after episode {episode}, only synthesize what's actually in
+  the comments provided.
+"""
+
+    response = client.chat.completions.create(model="gpt-4o", temperature=0.3, messages=[{"role": "user", "content": prompt}])
+    raw = response.choices[0].message.content.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").replace("json\n", "", 1)
+    try:
+        analysis = json.loads(raw)
+    except json.JSONDecodeError:
+        print("[fan_reaction] analysis parse failed, skipping")
+        return {"fan_reaction_analysis": None}
+
+    print(f"[fan_reaction] synthesized from {len(comments)} comments: "
+          f"{len(analysis.get('liked', []))} liked, {len(analysis.get('criticism', []))} criticism, "
+          f"{len(analysis.get('themes', []))} themes, {len(analysis.get('sample_quotes', []))} quotes")
+    return {"fan_reaction_analysis": analysis}
 
 
 # ---------------------------------------------------------------------------
@@ -1020,27 +1192,70 @@ nothing from it at all.
     # if the model cited it. Deterministic, not left to prompt compliance.
     draft["sources"] = [s for s in draft.get("sources", []) if not s.get("url", "").startswith("internal://")]
 
-    # Supplement participants with real TMDB names (hosts + contestants across
-    # every episode up to cutoff) that generation didn't already include. This
-    # adds, never removes, e.g. hosts are almost never mentioned in drama text
-    # but are legitimately part of the cast. Age/profession filled in from the
-    # cast CSV when available, left null otherwise, never guessed.
-    # Skipped entirely during the Pods-phase placeholder, adding real names
-    # there would defeat the spoiler protection that placeholder exists for.
+    # Structured, real YouTube-comment-based fan reaction overrides generate's own
+    # simple string synthesis when available. The simple string stays as the
+    # fallback for when no eligible (fully <= cutoff) YouTube video was found.
+    if state.get("fan_reaction_analysis"):
+        draft["audience_reaction"] = state["fan_reaction_analysis"]
+
+    # Supplement participants with real TMDB names for THIS episode specifically
+    # (not the whole 1-N range, confirmed that flattens into every contestant
+    # who ever appeared, not who's actually still in the story). A match
+    # ENRICHES the existing entry (fuller name, cast-CSV age/profession) rather
+    # than just being skipped, otherwise a vague/wrong model-generated entry
+    # (e.g. bare "Filip" with the wrong profession) survives untouched even
+    # when TMDB had the correct disambiguated name sitting right there.
+    # Age/profession only ever come from the cast CSV, never TMDB's role field,
+    # "Self - Contestant" is not real profession data.
+    # Skipped entirely during the Pods-phase placeholder, adding/editing real
+    # names there would defeat the spoiler protection that placeholder exists for.
     if phase not in ("Pods", "unknown"):
         cast_lookup = load_cast_lookup(edition, season)
-        existing_names = [p["name"].lower() for p in draft.get("participants", [])]
-        for tmdb_name, role in state.get("tmdb_participants", {}).items():
-            already_present = any(tmdb_name.lower() in existing or existing in tmdb_name.lower() for existing in existing_names)
-            if already_present:
-                continue
+        current_ep_tmdb = state.get("tmdb_participants", {}).get(episode, [])
+        participants = draft.setdefault("participants", [])
+
+        def find_match_index(tmdb_name: str) -> int | None:
+            tmdb_lower = tmdb_name.lower()
+            tmdb_tokens = set(tmdb_lower.split())
+            for i, p in enumerate(participants):
+                existing = p["name"].lower()
+                if tmdb_lower in existing or existing in tmdb_lower:
+                    return i
+                # First-name-token overlap catches nickname cases (e.g. "Kamil
+                # Uno" vs TMDB's "Kamil Michał Osiak"), approximate but safer
+                # than missing an obvious same-person match entirely.
+                if tmdb_tokens & set(existing.split()):
+                    return i
+            return None
+
+        for person in current_ep_tmdb:
+            tmdb_name = person["name"]
             info = cast_lookup.get(tmdb_name.lower(), {})
-            draft.setdefault("participants", []).append({
-                "name": tmdb_name,
-                "age": info.get("age"),
-                "profession": info.get("profession") or (role if role and role.lower() != "self" else None),
-            })
-            existing_names.append(tmdb_name.lower())
+            match_idx = find_match_index(tmdb_name)
+
+            if match_idx is not None:
+                existing = participants[match_idx]
+                name_upgraded = len(tmdb_name.split()) > len(existing["name"].split())
+                if name_upgraded:
+                    existing["name"] = tmdb_name
+                # Once the identity is confirmed/disambiguated via TMDB, cast CSV
+                # data is authoritative for THAT specific person, it overrides
+                # rather than just fills gaps: the model's old age/profession may
+                # have been attached to the wrong, ambiguous identity entirely
+                # (e.g. "Filip" guessed as an Engineer, when the real Filip in
+                # this episode, Filip Lenz, is a Flight Attendant per the CSV).
+                # If the CSV has no entry for this exact person, leave whatever
+                # the model already had rather than erasing it.
+                if info.get("age"):
+                    existing["age"] = info["age"]
+                if info.get("profession"):
+                    existing["profession"] = info["profession"]
+            else:
+                participants.append({
+                    "name": tmdb_name,
+                    "age": info.get("age"),
+                    "profession": info.get("profession"),
+                })
 
     print(f"[generate] attempt {state.get('attempts', 0) + 1}")
     return {"draft": draft, "attempts": state.get("attempts", 0) + 1}
@@ -1116,8 +1331,10 @@ def build_graph():
     graph.add_node("plan_and_search", node_plan_and_search)
     graph.add_node("load_season_index", node_load_season_index)
     graph.add_node("rank_and_select", node_rank_and_select)
+    graph.add_node("fetch_youtube_comments", node_fetch_youtube_comments)
     graph.add_node("index", node_index)
     graph.add_node("retrieve", node_retrieve)
+    graph.add_node("analyze_fan_reaction", node_analyze_fan_reaction)
     graph.add_node("generate", node_generate)
     graph.add_node("spoiler_check", node_spoiler_check)
 
@@ -1125,9 +1342,11 @@ def build_graph():
     graph.add_edge("fetch_show_metadata", "plan_and_search")
     graph.add_edge("plan_and_search", "load_season_index")
     graph.add_edge("load_season_index", "rank_and_select")
-    graph.add_edge("rank_and_select", "index")
+    graph.add_edge("rank_and_select", "fetch_youtube_comments")
+    graph.add_edge("fetch_youtube_comments", "index")
     graph.add_edge("index", "retrieve")
-    graph.add_edge("retrieve", "generate")
+    graph.add_edge("retrieve", "analyze_fan_reaction")
+    graph.add_edge("analyze_fan_reaction", "generate")
     graph.add_edge("generate", "spoiler_check")
     graph.add_conditional_edges("spoiler_check", route_after_spoiler_check, {"end": END, "retry": "generate"})
 
@@ -1140,7 +1359,9 @@ def run_pipeline(edition: str, season: int, episode: int) -> dict:
     initial_state = {
         "edition": edition, "season": season, "episode": episode, "phase": "unknown",
         "episode_titles": {}, "tmdb_participants": {},
-        "raw_sources": [], "ground_truth_sources": [], "selected_sources": [], "chunks": [], "context": "",
+        "raw_sources": [], "ground_truth_sources": [], "selected_sources": [],
+        "youtube_comments": [], "fan_reaction_analysis": None,
+        "chunks": [], "context": "",
         "draft": {}, "spoiler_issues": [], "spoiler_passed": False, "attempts": 0,
     }
     final_state = app.invoke(initial_state)

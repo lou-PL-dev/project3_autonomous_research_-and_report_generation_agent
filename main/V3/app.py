@@ -19,6 +19,27 @@ app = Flask(__name__)
 CORS(app)
 
 
+def format_audience_reaction(reaction) -> str:
+    if not reaction:
+        return "No fan reaction found in sources for this run."
+    if isinstance(reaction, str):
+        return reaction
+    lines = [reaction.get("overall_reception", "")]
+    if reaction.get("liked"):
+        lines.append("\nWhat fans liked:")
+        lines += [f"- {item}" for item in reaction["liked"]]
+    if reaction.get("criticism"):
+        lines.append("\nPoints of criticism:")
+        lines += [f"- {item}" for item in reaction["criticism"]]
+    if reaction.get("themes"):
+        lines.append("\nNotable fan themes:")
+        lines += [f"- {item}" for item in reaction["themes"]]
+    if reaction.get("sample_quotes"):
+        lines.append("\nSample reactions:")
+        lines += [f"- \"{q.get('text', '')}\" ({q.get('context', '')})" for q in reaction["sample_quotes"]]
+    return "\n".join(lines)
+
+
 def reshape_for_frontend(recap: dict) -> dict:
     moments = sorted(recap["highlights"]["moments"], key=lambda m: m["drama_rank"])
     ep_num = recap["highlights"]["episode_number"]
@@ -38,7 +59,7 @@ def reshape_for_frontend(recap: dict) -> dict:
         "mainDrama": recap["main_drama"],
         "episodeLabel": episode_label,
         "highlights": [m["text"] for m in moments],
-        "audienceReaction": recap["audience_reaction"] or "No fan reaction found in sources for this run.",
+        "audienceReaction": format_audience_reaction(recap["audience_reaction"]),
         "participants": participants,
         "conclusion": recap["conclusion"],
         "sources": recap["sources"],
