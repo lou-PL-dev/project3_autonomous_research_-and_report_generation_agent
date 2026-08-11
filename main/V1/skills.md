@@ -7,10 +7,10 @@ Phase structure: the show moves through phases in order: Pods → Honeymoon → 
 What each recap section actually is:
 
 intro: one short, hyped opening line for the whole recap. Sets tone, not content.
-main_drama: the season-wide arc, everything that's happened across all episodes up to the cutoff, not a retelling of just the latest episode. This is where multiple couples/storylines get named and connected. Specific detail, not vague mood-setting.
+main_drama: the season-wide arc before the searched episode, everything that's happened across all episodes up to the cutoff, not a retelling of just the latest episode. This is where multiple couples/storylines get named and connected. Specific detail, not vague mood-setting.
 highlights: distinct from main_drama, this is only about the requested episode itself. 3-4 ranked dramatic moments (most dramatic first), each with real detail (who, what, why it matters). Never fan reaction, that belongs in audience_reaction.
 audience_reaction: how fans reacted, kept separate from plot narration. Can be null if sources don't cover it, that's a real, expected gap at this stage (proper fan-reaction data is a later-version feature via YouTube comments).
-participants: name, age, profession only, no personality summaries. Only includes people who actually appear in the drama/episode content, a bio existing for someone isn't enough to include them. Special case: during the Pods phase (or when phase can't be confirmed), this field is replaced with a single "Wait for it!" placeholder instead of real names, since who paired with whom is itself a spoiler before the reveal.
+participants: name, age, profession only. Only includes people who actually appear in the that episode content, a bio existing for someone isn't enough to include them. Special case: during the Pods phase (or when phase can't be confirmed), this field is replaced with a single "Wait for it!" placeholder instead of real names, since who paired with whom is itself a spoiler before the reveal.
 sources: title + URL, but only sources actually used for a specific claim in this recap. A source that was fetched but didn't contribute anything must not be listed.
 conclusion: one short closing line that teases what's next without spoiling it.
 

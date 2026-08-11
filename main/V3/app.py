@@ -1,10 +1,10 @@
 """
-V1 API: wraps the RAG + LangGraph pipeline for the UI.
-Same response shape as the MVP's app.py, so recap_ui.html works unchanged.
+V2 API: wraps the ReAct planner + source-first RAG pipeline for the UI.
+Same response shape as V1's app.py, so recap_ui.html works unchanged.
 
 Usage:
     python app.py
-    (serves on http://localhost:5002)
+    (serves on http://localhost:5004)
 """
 
 from dotenv import load_dotenv
@@ -59,4 +59,4 @@ def get_recap():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5002)
+    app.run(debug=True, port=5004)

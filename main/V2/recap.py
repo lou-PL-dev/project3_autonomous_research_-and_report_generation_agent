@@ -1,8 +1,9 @@
 """
-V1 CLI: generate a spoiler-bounded recap using the RAG + LangGraph pipeline.
+V2 CLI: generate a spoiler-bounded recap using the ReAct planner + source-first RAG pipeline.
 
 Usage:
-    python main/recap.py --episode 6
+    python recap.py --episode 6
+    python recap.py --edition UK --season 1 --episode 3
 """
 
 import argparse
@@ -47,7 +48,7 @@ def print_recap(edition: str, season: int, recap: dict) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate a Love Is Blind recap (V1, RAG + LangGraph).")
+    parser = argparse.ArgumentParser(description="Generate a Love Is Blind recap (V2: ReAct planner + source-first RAG).")
     parser.add_argument("--edition", type=str, default="Poland")
     parser.add_argument("--season", type=int, default=1)
     parser.add_argument("--episode", type=int, required=True)

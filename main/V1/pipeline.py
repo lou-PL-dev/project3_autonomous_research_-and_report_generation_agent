@@ -1,15 +1,6 @@
 """
 V1: RAG (Pinecone) + LangGraph pipeline for the Love Is Blind recap generator.
 
-Adds over the MVP:
-- Chunking and semantic retrieval instead of dumping raw source text into one prompt
-- A dedicated spoiler-check node with a bounded feedback loop, not just a prompt instruction
-- Explicit LangGraph state management
-- Phase (Pods/Honeymoon/Moving In Together/Wedding/Reunion) derived from tagged chunk
-  content, not a hardcoded episode-number formula
-- Four targeted retrieval queries (bios, season drama, this episode, audience reaction)
-  instead of one blended query competing for the same slots
-
 Still single-source (Tavily web search) until TMDB/YouTube keys are added.
 
 Usage (CLI):
@@ -42,27 +33,23 @@ CHUNK_OVERLAP = 100
 MAX_CHARS_PER_SOURCE = 75000
 MAX_SPOILER_RETRIES = 1
 
-# Reveal is not its own phase, it's a moment that happens during Pods (contestants
-# meet face to face for the first time, still before Honeymoon).
 PHASES = ["Pods", "Honeymoon", "Moving In Together", "Wedding", "Reunion"]
 
 # Structurally general sources: cast/show reference pages, never episode-specific.
-# Skipping tagging for these entirely, no LLM call needed, saves cost and avoids
-# false-positive episode tags on generic content.
 GENERAL_DOMAINS = ["wikipedia.org", "themoviedb.org", "rottentomatoes.com", "imdb.com", "netflix.com"]
 
 # Domains confirmed, across multiple runs, to return unusable content (SPA
-# navigation chrome, no actual captions/article text), not "low value", actually
-# empty. Excluded entirely at fetch time, not just deprioritized, since they were
-# observed winning retrieval slots purely on repetitive boilerplate text.
+# navigation chrome, no actual captions/article text). Excluded entirely at
+# fetch time, since they were observed winning retrieval slots purely on
+# repetitive boilerplate text.
 NOISE_DOMAINS = ["tiktok.com", "spotify.com"]
 
 
 def is_noise_domain(url: str) -> bool:
     return any(domain in url for domain in NOISE_DOMAINS)
 
-# Extra name variants per edition, beyond the edition string itself, for the
-# wrong-show filter below (e.g. Poland's Polish-language title uses "Polska").
+# Extra name variants per edition, beyond the edition string itself (e.g.
+# Poland's Polish-language title uses "Polska").
 EDITION_ALIASES = {
     "poland": ["polska"],
 }
@@ -75,9 +62,8 @@ def is_general_domain(url: str) -> bool:
 def matches_edition(edition: str, title: str, content: str) -> bool:
     """Cheap wrong-show filter: does this source actually appear to be about the
     requested edition? A generic 'Love Is Blind' query pulls in other editions'
-    recap content (different countries, different season numbering) that looks
-    on-topic to a keyword search but is entirely irrelevant, or actively
-    misleading, for this edition/season.
+    recap content that looks on-topic to a keyword search but is entirely
+    irrelevant, or actively misleading, for this edition/season.
     """
     terms = [edition.lower()] + EDITION_ALIASES.get(edition.lower(), [])
     haystack = (title + " " + content[:1500]).lower()
@@ -93,13 +79,13 @@ class RecapState(TypedDict):
     chunks: list[dict]
     context: str
     draft: dict
-    spoiler_issues: list[str]
+    spoiler_issues: list[dict]  # [{"field": str, "moment_index": int|None, "issue": str}]
     spoiler_passed: bool
     attempts: int
 
 
 # ---------------------------------------------------------------------------
-# Node 1: fetch (unchanged from MVP)
+# Node 1: fetch
 # ---------------------------------------------------------------------------
 
 def node_fetch(state: RecapState) -> dict:
@@ -136,7 +122,7 @@ def node_fetch(state: RecapState) -> dict:
                     "title": title,
                     "url": url,
                     "content": raw[:MAX_CHARS_PER_SOURCE],
-                    "_raw_length": len(raw),  # diagnostic only, not used past the fetch print
+                    "_raw_length": len(raw),
                 })
 
     if skipped_noise:
@@ -251,7 +237,7 @@ Return ONLY a JSON array, no markdown fences, one object per chunk:
     try:
         tags = json.loads(raw)
     except json.JSONDecodeError:
-        return {}  # fail safe: caller defaults any unmatched chunk to null
+        return {}
 
     return {(t["source_index"], t["chunk_index"]): t for t in tags if "source_index" in t and "chunk_index" in t}
 
@@ -275,9 +261,8 @@ def node_index(state: RecapState) -> dict:
     namespace = namespace_for(state["edition"], state["season"])
 
     # Wipe this edition/season's namespace before indexing fresh. Without this,
-    # every prior run's vectors (including content we've since excluded, like
-    # TikTok, or chunks tagged before tagging quality fixes) stay in the index
-    # forever and keep competing in retrieval alongside new, better data.
+    # every prior run's vectors stay in the index forever and keep competing in
+    # retrieval alongside new, better data.
     try:
         index.delete(delete_all=True, namespace=namespace)
         print(f"[index] cleared namespace '{namespace}' before indexing")
@@ -327,13 +312,18 @@ def node_index(state: RecapState) -> dict:
             tag = tags_by_id.get((source_idx, chunk_idx), {"episode_start": None, "episode_end": None, "phase": None})
             ep_start = tag.get("episode_start")
             ep_end = tag.get("episode_end")
+            # Tagging LLM occasionally emits the string "null" instead of JSON null.
+            # Normalize any such stray string to a real None before it gets stored.
+            raw_phase = tag.get("phase")
+            if isinstance(raw_phase, str) and raw_phase.strip().lower() in ("null", "none", ""):
+                raw_phase = None
             chunk_id = f"{state['edition']}-{state['season']}-{source['url']}-{chunk_idx}".replace(" ", "_")[:512]
             metadata = {
                 "edition": state["edition"],
                 "season": state["season"],
                 "episode_start": ep_start if ep_start is not None else -1,
                 "episode_end": ep_end if ep_end is not None else -1,
-                "phase": tag.get("phase") or "unknown",
+                "phase": raw_phase or "unknown",
                 "source_url": source["url"],
                 "source_title": source["title"],
                 "text": chunk_text,
@@ -346,16 +336,13 @@ def node_index(state: RecapState) -> dict:
             })
 
     # Upsert in batches: one request with all vectors can exceed Pinecone's 4MB
-    # payload limit once volume is high (each vector carries a 1536-float embedding
-    # plus up to 800 chars of metadata text, ~10KB/vector observed). 200/batch stays
-    # safely under that with margin.
+    # payload limit once volume is high. 200/batch stays safely under that with margin.
     UPSERT_BATCH_SIZE = 200
     for batch_start in range(0, len(vectors_to_upsert), UPSERT_BATCH_SIZE):
         batch = vectors_to_upsert[batch_start:batch_start + UPSERT_BATCH_SIZE]
         if batch:
             index.upsert(vectors=batch, namespace=namespace)
 
-    # Diagnostic: per-range breakdown of how many chunks got a real phase vs "unknown".
     by_range: dict[tuple[int, int], list[str]] = {}
     for c in all_chunks:
         by_range.setdefault((c["episode_start"], c["episode_end"]), []).append(c["phase"])
@@ -379,14 +366,19 @@ def resolve_phase(chunks: list[dict], episode: int) -> str:
     If none contain it yet, fall back to the nearest range ending at or before it.
     Returns "unknown" if nothing usable is found, callers should treat "unknown"
     with the same caution as "Pods" (fail toward more spoiler protection, not less).
+
+    Whitelists against PHASES rather than just excluding "unknown", since the tagging
+    LLM has been observed emitting stray values like the literal string "null" instead
+    of JSON null, which would otherwise pass through as a bogus "resolved" phase and
+    crash PHASES.index() downstream.
     """
     candidates = [
         c for c in chunks
-        if c["episode_start"] >= 0 and c["episode_start"] <= episode <= c["episode_end"] and c["phase"] != "unknown"
+        if c["episode_start"] >= 0 and c["episode_start"] <= episode <= c["episode_end"] and c["phase"] in PHASES
     ]
 
     if not candidates:
-        lower = [c for c in chunks if 0 <= c["episode_end"] <= episode and c["phase"] != "unknown"]
+        lower = [c for c in chunks if 0 <= c["episode_end"] <= episode and c["phase"] in PHASES]
         if lower:
             max_end = max(c["episode_end"] for c in lower)
             candidates = [c for c in lower if c["episode_end"] == max_end]
@@ -409,10 +401,9 @@ def pinecone_query(client: OpenAI, index, query_text: str, filter_dict: dict, to
 
 def cap_per_source(metas: list[dict], max_per_source: int = 3) -> list[dict]:
     """Limit how many chunks from any single source can occupy a bucket's slots.
-    Without this, one heavily-covered storyline (more sources discuss it, so more
-    of its chunks rank high) or one repetitive source (e.g. a looping TikTok caption)
-    can crowd out every other storyline entirely, even when real content about them
-    exists in the index. Preserves original ranking order, just skips over-quota items.
+    Without this, one heavily-covered storyline, or one repetitive source, can
+    crowd out every other storyline entirely. Preserves original ranking order,
+    just skips over-quota items.
     """
     counts: dict[str, int] = {}
     capped = []
@@ -434,43 +425,39 @@ def node_retrieve(state: RecapState) -> dict:
     namespace = namespace_for(edition, season)
     base_filter = {"edition": {"$eq": edition}, "season": {"$eq": season}}
     general_filter = {**base_filter, "episode_start": {"$eq": -1}}
-    # Fully within what's aired: chunk's whole range must end at or before cutoff.
-    # (episode_start >= 0 excludes general/-1 chunks, which would otherwise slip in
-    # since -1 <= episode is trivially true.)
     up_to_cutoff_filter = {**base_filter, "episode_start": {"$gte": 0}, "episode_end": {"$lte": episode}}
-    # Chunk's range contains the target episode (covers a single episode OR a range spanning it).
     exact_episode_filter = {**base_filter, "episode_start": {"$lte": episode}, "episode_end": {"$gte": episode}}
 
     # Phase resolved first: drama_episodes' filter below needs to know which phases
-    # are "allowed" (up to and including the current one) before it can query.
+    # are "allowed" (strictly before the current one) before it can query. Current
+    # phase is excluded from "so far" content on purpose, that belongs in highlights.
     phase = resolve_phase(state["chunks"], episode)
     if phase == "unknown":
-        allowed_phases = ["Pods"]  # same conservative default used by the spoiler rule
+        print("Oooh noooo! I couldn't find the episode phase!")
+        allowed_phases = []
     else:
-        allowed_phases = PHASES[:PHASES.index(phase) + 1]
+        allowed_phases = PHASES[:PHASES.index(phase)]
 
-    # 1. Bios: general/background content only, this is their dedicated lane so they
-    #    stop competing with drama/franchise content for the same slots.
+    # 1. Bios: general/background content only, dedicated lane so they stop
+    #    competing with drama/franchise content for the same slots.
     bios = pinecone_query(client, index, f"Love is Blind {edition} season {season} cast member names ages professions occupations", general_filter, top_k=20, namespace=namespace)
 
     # 2. Season-wide drama: filtered by PHASE rather than episode range. Phase signals
     #    (a wall/screen conversation, a shared apartment, a dress fitting) are observable
     #    content markers that don't depend on a source ever stating an episode number,
-    #    which real recap narration often doesn't do explicitly. This is what recovers
-    #    "Episodes 1-5" style content that episode-range tagging alone kept missing.
+    #    which real recap narration often doesn't do explicitly.
     known_phase_filter = {**base_filter, "phase": {"$in": allowed_phases}}
     drama_general = pinecone_query(client, index, f"Love is Blind {edition} season {season} main storylines couples conflicts", general_filter, top_k=10, namespace=namespace)
-    drama_episodes = pinecone_query(client, index, f"Love is Blind {edition} season {season} drama and relationships so far", known_phase_filter, top_k=15, namespace=namespace)
-    # Unknown-phase chunks get a second chance, but only if their own episode range is
-    # independently spoiler-safe. Not a blanket include, not a blanket exclude.
-    unknown_phase_safe_filter = {**base_filter, "phase": {"$eq": "unknown"}, "episode_start": {"$gte": 0}, "episode_end": {"$lte": episode}}
-    drama_episodes += pinecone_query(client, index, f"Love is Blind {edition} season {season} drama and relationships so far", unknown_phase_safe_filter, top_k=10, namespace=namespace)
+    # Pulls ONLY from chunks with a confidently-resolved phase strictly before the
+    # current one. No fallback readmitting "unknown phase" chunks by episode range,
+    # that previously let current-episode content leak back into "so far" whenever
+    # phase tagging failed on it (which was common for multi-episode-spanning sources).
+    drama_episodes = pinecone_query(client, index, f"Love is Blind {edition} season {season} drama and relationships so far", known_phase_filter, top_k=25, namespace=namespace)
     drama_episodes = cap_per_source(drama_episodes, max_per_source=3)
 
     # 3. This episode specifically: exact match first (for highlights), falls back to
-    #    up-to-cutoff if the exact episode has little tagged content yet. Capped per
-    #    source for the same diversity reason. Kept episode-range based (not phase),
-    #    highlights needs single-episode precision, phase is coarser than that.
+    #    up-to-cutoff if the exact episode has little tagged content yet. Kept
+    #    episode-range based (not phase), highlights needs single-episode precision.
     this_episode = pinecone_query(client, index, f"Love is Blind {edition} season {season} episode {episode} events", exact_episode_filter, top_k=20, namespace=namespace)
     if len(cap_per_source(this_episode, max_per_source=3)) < 5:
         this_episode += pinecone_query(client, index, f"Love is Blind {edition} season {season} episode {episode} events", up_to_cutoff_filter, top_k=10, namespace=namespace)
@@ -500,7 +487,7 @@ def node_retrieve(state: RecapState) -> dict:
 
     context = "\n\n".join([
         format_section("PARTICIPANT BIOS", bios),
-        format_section("SEASON-WIDE DRAMA", drama_general + drama_episodes),
+        format_section("PRIOR EPISODES: SPECIFIC EVENTS", drama_general + drama_episodes),
         format_section(f"EPISODE {episode} SPECIFIC EVENTS", this_episode),
         format_section("AUDIENCE REACTION", reaction),
     ])
@@ -587,16 +574,17 @@ Avoid flowery or overwritten vocabulary. Do not use words like: whirlwind, swirl
 web(s), rollercoaster, tapestry, saga, riveting, utterly, ablaze, or similar. Write like someone
 would actually talk, not like a dramatic voiceover script.
 
-The context below is organized into four labeled sections: PARTICIPANT BIOS, SEASON-WIDE DRAMA,
-EPISODE {episode} SPECIFIC EVENTS, and AUDIENCE REACTION. Use each section for its matching
-field, described below.
+The context below is organized into four labeled sections: PARTICIPANT BIOS, PRIOR EPISODES:
+SPECIFIC EVENTS, EPISODE {episode} SPECIFIC EVENTS, and AUDIENCE REACTION. Use each section for
+its matching field, described below.
 
 Return ONLY valid JSON, no markdown fences, no preamble, with this exact shape:
 {{
   "intro": "string, one short hype sentence that opens the whole recap, conversational",
-  "main_drama": "string, everything that's happened THIS SEASON SO FAR, across all episodes up
-    to {episode}, naming names and what they did. This is the season-wide picture, not a
-    retelling of the most recent episode, that belongs in highlights instead.",
+  "main_drama": "string, the SPECIFIC events and facts from episodes before {episode}'s phase,
+    naming names and exactly what they did. Not a vague season-level summary, precise, concrete
+    beats from earlier episodes, told the same way highlights are: what happened, who, why it
+    matters. Current-episode events belong in highlights only, never here.",
   "highlights": {{
     "episode_number": {episode},
     "episode_title": "string or null if not known from context",
@@ -618,10 +606,13 @@ Return ONLY valid JSON, no markdown fences, no preamble, with this exact shape:
   "conclusion": "string, one short closing sentence that wraps up the recap, conversational, teases what's next without spoiling"
 }}
 
-For "main_drama", use BOTH the SEASON-WIDE DRAMA section and the EPISODE {episode} SPECIFIC
-EVENTS section, pull together multiple couples and storylines across multiple episodes if the
-context covers that, not just what happened most recently. Specific, sharp detail belongs here
-too, not just generic season-level description.
+For "main_drama", use ONLY the PRIOR EPISODES: SPECIFIC EVENTS section. Never use EPISODE
+{episode} SPECIFIC EVENTS here, even if it seems relevant, that section is reserved for
+highlights and may contain content from episodes after {episode}. This section already only
+contains content confirmed to be safely before the current episode, so treat it as a source of
+FACTS to report precisely, not a prompt to summarize loosely. Name specific people and specific
+things they did across multiple earlier episodes if the context covers several, don't collapse
+it into a generic "this season has been wild" summary.
 
 For "highlights.moments", use ONLY the EPISODE {episode} SPECIFIC EVENTS section. Aim for 3 to 4
 distinct dramatic moments, ranked by how dramatic or discussed they are, drama_rank 1 being the
@@ -632,7 +623,7 @@ belongs in "audience_reaction" only, never in highlights.
 
 For "audience_reaction", use the AUDIENCE REACTION section specifically.
 
-For "participants", first identify which names actually appear in the SEASON-WIDE DRAMA or
+For "participants", first identify which names actually appear in the PRIOR EPISODES: SPECIFIC EVENTS or
 EPISODE {episode} SPECIFIC EVENTS sections, those are the real storyline participants for this
 recap. Only include people from that set. Use the PARTICIPANT BIOS section only to fill in age
 and profession for those specific names, never to introduce a name that doesn't otherwise appear
@@ -686,17 +677,58 @@ in episode {episode + 1} or later, for example: naming a couple's final wedding 
 the Wedding phase has aired, revealing pod pairings before the reveal, or stating whether a
 couple is still together after the reunion.
 
-Example of what is NOT a spoiler: "Krzysztof admitted to cheating on Malika with Kinga in
-episode {episode}" — this is a normal episode {episode} plot event, not a spoiler, even though
-it's dramatic.
-Example of what IS a spoiler: "Malika and Krzysztof ultimately divorce" or "at the wedding,
-Krzysztof says no" — these state outcomes from phases/episodes that haven't aired yet.
+NOT A SPOILER: generic forward-looking closers that don't name a specific person, pairing, or
+outcome, like "can't wait to see what happens next!" or "this drama is far from over!". These
+are just narrator voice, not a claim about the future. Only flag language that ties to a
+concrete, future-confirmed fact, never flag tone or excitement alone.
+
+NOT A SPOILER, structural rule: a confession, reveal, admission, or confrontation described as
+something that ALREADY HAPPENED ("came out that...", "admitted to...", "was revealed to...",
+"it turns out...") is, by definition, a past or current event, not a future one. This is true
+no matter how dramatic the reveal is or how much unresolved tension it implies. Do not flag a
+reveal just because it's dramatic or because a reasonable viewer would wonder what happens next,
+that wondering is the intended effect of a "previously on" recap, not evidence of a spoiler.
+Only flag what comes AFTER such a reveal: whether the relationship survives it, how it gets
+resolved, or any other consequence that would only be confirmed in a LATER episode than the one
+the reveal itself belongs to.
+
+Example of what is NOT a spoiler: "it came out that one contestant had been secretly seeing an
+ex" — this describes a reveal itself, a normal recap-worthy plot event, not a spoiler.
+Example of what IS a spoiler: "the couple ultimately splits up over it" or "she chooses to stay
+with him at the altar" — these state outcomes or resolutions from phases/episodes that haven't
+aired yet, not the reveal itself.
+
+GROUNDING: below is the same sourced context that was used to write this draft. Each block is
+labeled with the episode number or range it actually covers (or "general" if not episode-specific).
+Use this to check your judgment on any claim you're unsure about: if a claim is corroborated by
+at least one block labeled with an episode number at or before {episode}, treat it as confirmed
+episode-{episode}-or-earlier content and do NOT flag it, even if that same claim also appears in
+a block labeled with a wider range that extends past {episode} (recap sources often bundle
+several episodes into one video/article, that doesn't make the underlying event itself a
+spoiler). Only flag a claim if you cannot find it grounded in any block labeled at or before
+{episode}, and it matches the future-consequence pattern described above.
+
+SOURCE CONTEXT:
+{state['context']}
 
 Draft recap:
 {draft_text}
 
-Return ONLY JSON: {{"passed": true_or_false, "issues": ["specific issue 1", ...]}}
-If passed is true, issues should be an empty array."""
+For each issue found, identify exactly which field it's in, so a downstream repair step can
+target just that field:
+- "intro": the intro field
+- "main_drama": the main_drama field
+- "highlights_moment": one entry in highlights.moments (include its index, 0-based)
+- "audience_reaction": the audience_reaction field
+- "conclusion": the conclusion field
+Do not flag "participants" or "sources", a name or a URL is never a spoiler on its own.
+
+Return ONLY JSON:
+{{"passed": true_or_false, "issues": [
+  {{"field": "conclusion", "moment_index": null, "issue": "specific issue description"}}
+]}}
+If passed is true, issues should be an empty array. moment_index is only used when
+field is "highlights_moment", null otherwise."""
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -709,20 +741,105 @@ If passed is true, issues should be an empty array."""
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
-        result = {"passed": True, "issues": []}  # fail open rather than loop forever on a parsing bug
+        result = {"passed": True, "issues": []}
 
     print(f"[spoiler_check] passed={result['passed']} issues={result.get('issues')}")
     return {"spoiler_passed": result["passed"], "spoiler_issues": result.get("issues", [])}
 
+# ---------------------------------------------------------------------------
+# Node: repair — targeted rewrite of only the flagged fields, not a full regenerate
+# ---------------------------------------------------------------------------
+
+# The checker is prompted to return exactly "highlights_moment", but LLM output on an
+# exact-string field isn't guaranteed, "highlights.moments", "highlights", "moments" have
+# all been observed. Normalize known variants rather than crashing on a KeyError.
+_HIGHLIGHTS_FIELD_ALIASES = {"highlights_moment", "highlights.moments", "highlights", "moments"}
+_VALID_TOP_LEVEL_FIELDS = {"intro", "main_drama", "audience_reaction", "conclusion"}
+
+
+def _normalize_field(raw_field: str) -> str | None:
+    if raw_field in _HIGHLIGHTS_FIELD_ALIASES:
+        return "highlights_moment"
+    if raw_field in _VALID_TOP_LEVEL_FIELDS:
+        return raw_field
+    return None
+
+
+def _get_field_text(draft: dict, issue: dict) -> str:
+    if issue["field"] == "highlights_moment":
+        return draft["highlights"]["moments"][issue["moment_index"]]["text"]
+    return draft[issue["field"]]
+
+
+def _set_field_text(draft: dict, issue: dict, new_text: str) -> None:
+    if issue["field"] == "highlights_moment":
+        draft["highlights"]["moments"][issue["moment_index"]]["text"] = new_text
+    else:
+        draft[issue["field"]] = new_text
+
+
+def node_repair(state: RecapState) -> dict:
+    client = OpenAI()
+    episode = state["episode"]
+    draft = json.loads(json.dumps(state["draft"]))
+
+    for issue in state["spoiler_issues"]:
+        normalized = _normalize_field(issue.get("field", ""))
+        if normalized is None:
+            print(f"[repair] skipping unrecognized field '{issue.get('field')}', leaving as-is")
+            continue
+        issue = {**issue, "field": normalized}
+
+        if normalized == "highlights_moment" and issue.get("moment_index") is None:
+            print("[repair] skipping highlights_moment issue with no moment_index")
+            continue
+
+        current_text = _get_field_text(draft, issue)
+        prompt = f"""You are revising one small piece of a "previously on" recap for Love Is Blind,
+to remove a spoiler flagged by an editor. The user has only watched up to episode {episode}.
+
+CURRENT TEXT:
+{current_text}
+
+FLAGGED ISSUE:
+{issue['issue']}
+
+Rewrite ONLY this text to remove the spoiler, keeping the same casual, excited, conversational
+narrator voice as the original. Keep it roughly the same length. Do not introduce new claims,
+if removing the spoiler leaves the text thin, keep it general rather than inventing detail.
+
+Return ONLY the rewritten text, no quotes, no JSON, no preamble."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            temperature=0.4,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        new_text = response.choices[0].message.content.strip()
+        _set_field_text(draft, issue, new_text)
+        print(f"[repair] rewrote field '{issue['field']}'"
+              + (f" (moment {issue['moment_index']})" if issue["field"] == "highlights_moment" else ""))
+
+    return {"draft": draft, "attempts": state.get("attempts", 0) + 1}
+
+
+# ---------------------------------------------------------------------------
+# Node: mark_unverified — stamps the draft when max retries are hit without passing
+# ---------------------------------------------------------------------------
+
+def node_mark_unverified(state: RecapState) -> dict:
+    draft = json.loads(json.dumps(state["draft"]))
+    draft["_spoiler_unverified"] = True
+    return {"draft": draft}
+
 
 def route_after_spoiler_check(state: RecapState) -> str:
     if state["spoiler_passed"]:
-        return "end"
+        return "end_passed"
     if state["attempts"] > MAX_SPOILER_RETRIES:
-        print("[spoiler_check] max retries reached, returning draft as-is")
-        return "end"
+        print("[spoiler_check] max retries reached, returning draft as-is (flagged unverified)")
+        return "end_failed"
     return "retry"
-
 
 # ---------------------------------------------------------------------------
 # Graph assembly
@@ -735,13 +852,21 @@ def build_graph():
     graph.add_node("retrieve", node_retrieve)
     graph.add_node("generate", node_generate)
     graph.add_node("spoiler_check", node_spoiler_check)
+    graph.add_node("repair", node_repair)
+    graph.add_node("mark_unverified", node_mark_unverified)
 
     graph.set_entry_point("fetch")
     graph.add_edge("fetch", "index")
     graph.add_edge("index", "retrieve")
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", "spoiler_check")
-    graph.add_conditional_edges("spoiler_check", route_after_spoiler_check, {"end": END, "retry": "generate"})
+    graph.add_conditional_edges(
+        "spoiler_check",
+        route_after_spoiler_check,
+        {"end_passed": END, "end_failed": "mark_unverified", "retry": "repair"},
+    )
+    graph.add_edge("repair", "spoiler_check")
+    graph.add_edge("mark_unverified", END)
 
     return graph.compile()
 
@@ -753,7 +878,7 @@ def run_pipeline(edition: str, season: int, episode: int) -> dict:
         "edition": edition,
         "season": season,
         "episode": episode,
-        "phase": "unknown",  # resolved by node_retrieve from actual tagged chunk content
+        "phase": "unknown",
         "sources": [],
         "chunks": [],
         "context": "",

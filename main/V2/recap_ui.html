@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Previously On: Love Is Blind</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body{margin:0}
+  *{font-family:'Oswald',sans-serif;box-sizing:border-box}
+  a{color:#ffd60a}
+  a:hover{color:#ffe680}
+  .gold-text{background:linear-gradient(100deg,#7a5310 0%,#c8901a 15%,#f5cf5a 30%,#fff8dd 42%,#f5cf5a 54%,#caa53a 70%,#946b17 85%,#c8901a 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 2px 1px rgba(0,0,0,.35))}
+  select,input[type=number]{appearance:none}
+  .pod-outer{border-radius:20px;box-shadow:0 0 6px rgba(255,214,10,.28),0 0 14px rgba(232,180,0,.15)}
+  .pod-inner{border-radius:18px}
+  .field-label{font-size:13px;font-weight:600;letter-spacing:.06em;color:#ffd60a;text-transform:uppercase}
+  .field-input{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:11px 12px;color:#fff;font-size:15px;width:100%}
+  .field-input:focus{outline:2px solid #ffd60a;outline-offset:1px}
+  .submit-btn{margin-top:2px;background:linear-gradient(90deg,#946b17,#f5cf5a,#946b17);color:#2a0f4a;border:none;border-radius:10px;padding:13px;font-weight:700;font-size:15px;letter-spacing:.04em;cursor:pointer;width:100%}
+  .submit-btn:hover{filter:brightness(1.06)}
+  .submit-btn:disabled{opacity:.6;cursor:not-allowed}
+  .card{background:rgba(20,6,38,.5);border:1px solid rgba(245,212,148,.22);border-radius:18px;padding:28px 30px}
+  .card h2{font-size:19px;margin:0 0 10px;color:#ffe066;letter-spacing:.03em}
+  .card p{font-size:15px;line-height:1.7;color:rgba(224,218,232,.88);margin:0}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+
+<div style="min-height:100vh;width:100%;background:radial-gradient(circle at 20% 0%, #7b2ea8 0%, transparent 55%), linear-gradient(155deg,#2a0f4a 0%,#5b1a86 32%,#9a2a8f 62%,#c22d6b 100%);color:#f3e9ff;display:flex;flex-direction:column;align-items:center;padding:28px 24px 40px">
+
+  <div style="text-align:center;max-width:720px;margin-bottom:20px">
+    <div style="font-size:31px;font-weight:600;letter-spacing:.24em;color:rgba(255,255,255,.85);margin-bottom:8px">PREVIOUSLY ON</div>
+    <h1 class="gold-text" style="font-size:58px;font-weight:700;letter-spacing:.02em;margin:0;line-height:1.05">LOVE IS BLIND</h1>
+    <p style="font-size:18px;font-weight:600;color:rgba(255,255,255,.92);margin:10px 0 0;line-height:1.5">YOUR RECAP BESTIE. SPOILER-FREE, ALWAYS.</p>
+  </div>
+
+  <div class="pod-outer" style="width:100%;max-width:560px;padding:3px;background:linear-gradient(135deg,#e8b400,#946b17)">
+    <div class="pod-inner" style="background:#1c0a34;padding:24px 28px">
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label class="field-label" for="lib-edition">Edition</label>
+          <select id="lib-edition" class="field-input"></select>
+        </div>
+
+        <div style="display:flex;gap:14px">
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <label class="field-label" for="lib-season">Season</label>
+            <select id="lib-season" class="field-input"></select>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <label class="field-label" for="lib-episode">Last Episode</label>
+            <input id="lib-episode" class="field-input" type="number" min="1" max="12" value="6">
+          </div>
+        </div>
+
+        <button id="submit-btn" class="submit-btn">SPILL THE TEA</button>
+      </div>
+    </div>
+  </div>
+
+  <p id="loading-msg" class="hidden" style="margin-top:24px;font-size:14px;color:rgba(255,255,255,.75);text-align:center">Hold on, I'm getting into everyone's business rn...</p>
+  <p id="error-msg" class="hidden" style="margin-top:24px;font-size:14px;color:#ff8080;text-align:center;max-width:480px"></p>
+
+  <div id="results" class="hidden" style="width:100%;max-width:720px;margin-top:48px;flex-direction:column;gap:24px">
+
+    <div style="display:flex;align-items:center;gap:14px;justify-content:center">
+      <span style="height:1px;flex:1;background:rgba(255,255,255,.2)"></span>
+      <span id="phase-label" style="font-size:13px;font-weight:600;letter-spacing:.18em;color:#ffd60a;white-space:nowrap"></span>
+      <span style="height:1px;flex:1;background:rgba(255,255,255,.2)"></span>
+    </div>
+
+    <p id="intro-text" style="font-size:17px;font-weight:600;color:rgba(224,218,232,.9);margin:0;text-align:center"></p>
+
+    <div class="card">
+      <h2>MAIN DRAMA SO FAR</h2>
+      <p id="main-drama" style="white-space:pre-line"></p>
+    </div>
+
+    <div class="card">
+      <h2 id="highlights-header"></h2>
+      <div id="highlights-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>AUDIENCE REACTION</h2>
+      <p id="audience-reaction"></p>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom:14px">PARTICIPANTS</h2>
+      <div id="participants-list" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+
+    <p id="conclusion-text" style="font-size:15px;font-weight:600;color:rgba(224,218,232,.88);margin:0;text-align:center"></p>
+
+    <div style="background:rgba(20,6,38,.35);border:1px dashed rgba(245,212,148,.3);border-radius:14px;padding:20px 24px">
+      <h3 style="font-size:13px;letter-spacing:.1em;margin:0 0 10px;color:rgba(255,214,10,.85);text-transform:uppercase">Sources</h3>
+      <div id="sources-list" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API_BASE = 'http://localhost:5003';
+
+const EDITIONS = ['Love Is Blind (US)','Love Is Blind: Argentina','Casamento às Cegas: Brasil','Love Is Blind: France','Love Is Blind: Germany','Love Is Blind: Habibi','Love Is Blind: Italy','Love Is Blind: Japan','Love Is Blind: Mexico','Love Is Blind: Poland','Love Is Blind: Sweden','Love Is Blind: UK'];
+
+// The API just wants a short token (Poland, UK, US...) for its search queries,
+// not the full display label from the dropdown.
+const EDITION_SHORT_NAMES = {
+  'Love Is Blind (US)': 'US',
+  'Love Is Blind: Argentina': 'Argentina',
+  'Casamento às Cegas: Brasil': 'Brazil',
+  'Love Is Blind: France': 'France',
+  'Love Is Blind: Germany': 'Germany',
+  'Love Is Blind: Habibi': 'Habibi',
+  'Love Is Blind: Italy': 'Italy',
+  'Love Is Blind: Japan': 'Japan',
+  'Love Is Blind: Mexico': 'Mexico',
+  'Love Is Blind: Poland': 'Poland',
+  'Love Is Blind: Sweden': 'Sweden',
+  'Love Is Blind: UK': 'UK'
+};
+
+const editionSelect = document.getElementById('lib-edition');
+const seasonSelect = document.getElementById('lib-season');
+const episodeInput = document.getElementById('lib-episode');
+const submitBtn = document.getElementById('submit-btn');
+const loadingMsg = document.getElementById('loading-msg');
+const errorMsg = document.getElementById('error-msg');
+const results = document.getElementById('results');
+
+EDITIONS.forEach(ed => {
+  const opt = document.createElement('option');
+  opt.value = ed;
+  opt.textContent = ed;
+  if (ed === 'Love Is Blind: Poland') opt.selected = true;
+  editionSelect.appendChild(opt);
+});
+
+for (let s = 1; s <= 8; s++) {
+  const opt = document.createElement('option');
+  opt.value = s;
+  opt.textContent = `Season ${s}`;
+  seasonSelect.appendChild(opt);
+}
+
+function phaseFor(ep) {
+  if (ep <= 4) return 'Pods';
+  if (ep === 5) return 'Reveal';
+  if (ep <= 7) return 'Honeymoon';
+  if (ep <= 9) return 'Moving In Together';
+  if (ep <= 11) return 'Wedding';
+  return 'Reunion';
+}
+
+function renderRecap(data, episode) {
+  document.getElementById('phase-label').textContent = `PHASE: ${phaseFor(episode)}`;
+  document.getElementById('intro-text').textContent = data.intro;
+  document.getElementById('main-drama').textContent = data.mainDrama;
+  document.getElementById('highlights-header').textContent = `HIGHLIGHTS OF THE LAST EPISODE (${data.episodeLabel})`;
+
+  const highlightsList = document.getElementById('highlights-list');
+  highlightsList.innerHTML = '';
+  data.highlights.forEach(beat => {
+    const p = document.createElement('p');
+    p.style.cssText = 'font-size:15px;line-height:1.7;color:rgba(224,218,232,.88);margin:0;padding-left:16px;border-left:2px solid rgba(255,214,10,.5)';
+    p.textContent = beat;
+    highlightsList.appendChild(p);
+  });
+
+  document.getElementById('audience-reaction').textContent = data.audienceReaction;
+
+  const participantsList = document.getElementById('participants-list');
+  participantsList.innerHTML = '';
+  data.participants.forEach(person => {
+    const div = document.createElement('div');
+    div.style.cssText = 'font-size:15px;color:#fff;font-weight:600';
+    div.innerHTML = `${person.name} <span style="color:rgba(255,255,255,.75);font-weight:400">(${person.age}, ${person.occupation})</span>`;
+    participantsList.appendChild(div);
+  });
+
+  document.getElementById('conclusion-text').textContent = data.conclusion;
+
+  const sourcesList = document.getElementById('sources-list');
+  sourcesList.innerHTML = '';
+  data.sources.forEach(src => {
+    const a = document.createElement('a');
+    a.href = src.url;
+    a.target = '_blank';
+    a.style.cssText = 'font-size:14px;line-height:1.6;color:#ffd60a;text-decoration:underline';
+    a.textContent = src.title;
+    sourcesList.appendChild(a);
+  });
+
+  results.classList.remove('hidden');
+  results.style.display = 'flex';
+}
+
+submitBtn.addEventListener('click', async () => {
+  const edition = editionSelect.value;
+  const season = parseInt(seasonSelect.value, 10);
+  const episode = Math.max(1, Math.min(12, parseInt(episodeInput.value || '1', 10)));
+  const shortEdition = EDITION_SHORT_NAMES[edition] || edition;
+
+  results.classList.add('hidden');
+  errorMsg.classList.add('hidden');
+  loadingMsg.classList.remove('hidden');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'STIRRING THE POT...';
+
+  const params = new URLSearchParams({ edition: shortEdition, season, episode });
+
+  try {
+    const response = await fetch(`${API_BASE}/api/recap?${params}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Something went wrong generating the recap.');
+    }
+    renderRecap(data, episode);
+  } catch (err) {
+    errorMsg.textContent = `Something broke: ${err.message || 'Could not reach the recap server. Is app.py running?'}`;
+    errorMsg.classList.remove('hidden');
+  } finally {
+    loadingMsg.classList.add('hidden');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'SPILL THE TEA';
+  }
+});
+</script>
+
+</body>
+</html>

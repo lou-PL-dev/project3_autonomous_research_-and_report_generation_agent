@@ -67,6 +67,10 @@
 
   <div id="results" class="hidden" style="width:100%;max-width:720px;margin-top:48px;flex-direction:column;gap:24px">
 
+    <div id="spoiler-warning" class="hidden" style="background:rgba(255,80,80,.15);border:1px solid rgba(255,120,120,.5);border-radius:12px;padding:14px 18px;font-size:14px;color:#ffb3b3;text-align:center">
+      ⚠️ This recap didn't pass the automated spoiler check after retries — read with caution.
+    </div>
+
     <div style="display:flex;align-items:center;gap:14px;justify-content:center">
       <span style="height:1px;flex:1;background:rgba(255,255,255,.2)"></span>
       <span id="phase-label" style="font-size:13px;font-weight:600;letter-spacing:.18em;color:#ffd60a;white-space:nowrap"></span>
@@ -160,6 +164,8 @@ function phaseFor(ep) {
 }
 
 function renderRecap(data, episode) {
+  const spoilerWarning = document.getElementById('spoiler-warning');
+  spoilerWarning.classList.toggle('hidden', !data.spoilerUnverified);
   document.getElementById('phase-label').textContent = `PHASE: ${phaseFor(episode)}`;
   document.getElementById('intro-text').textContent = data.intro;
   document.getElementById('main-drama').textContent = data.mainDrama;
