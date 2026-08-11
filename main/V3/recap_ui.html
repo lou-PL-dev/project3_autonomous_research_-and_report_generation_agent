@@ -87,7 +87,7 @@
 
     <div class="card">
       <h2>AUDIENCE REACTION</h2>
-      <p id="audience-reaction"></p>
+      <p id="audience-reaction" style="white-space:pre-line"></p>
     </div>
 
     <div class="card">
@@ -212,7 +212,7 @@ submitBtn.addEventListener('click', async () => {
   errorMsg.classList.add('hidden');
   loadingMsg.classList.remove('hidden');
   submitBtn.disabled = true;
-  submitBtn.textContent = 'STIRRING THE POT...';
+  submitBtn.textContent = 'UNPACKING THE DRAMA…';
 
   const params = new URLSearchParams({ edition: shortEdition, season, episode });
 
