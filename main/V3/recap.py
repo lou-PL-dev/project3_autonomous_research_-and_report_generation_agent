@@ -34,28 +34,34 @@ def print_recap(edition: str, season: int, recap: dict) -> None:
         if reaction.get("liked"):
             print("\nWhat fans liked:")
             for item in reaction["liked"]:
-                print(f"  - {item}")
+                print(f"- {item}")
         if reaction.get("criticism"):
-            print("\nPoints of criticism:")
+            print("\nWhat is criticized:")
             for item in reaction["criticism"]:
-                print(f"  - {item}")
+                print(f"- {item}")
         if reaction.get("themes"):
-            print("\nNotable fan themes:")
+            print("\nMain themes:")
             for item in reaction["themes"]:
-                print(f"  - {item}")
+                print(f"- {item}")
         if reaction.get("sample_quotes"):
-            print("\nSample reactions:")
+            print("\nBest Quotes:")
             for q in reaction["sample_quotes"]:
-                print(f"  - \"{q.get('text', '')}\" ({q.get('context', '')})")
+                print(f"- \"{q.get('text', '')}\" ({q.get('context', '')})")
     else:
         print(reaction if reaction else "No fan reaction found in sources for this run.")
     print()
 
     print("PARTICIPANTS")
-    for person in recap["participants"]:
+    contestants = [p for p in recap["participants"] if not p.get("is_host")]
+    hosts = [p for p in recap["participants"] if p.get("is_host")]
+    for person in contestants:
         age = person["age"] if person["age"] else "age unknown"
         profession = person["profession"] if person["profession"] else "profession unknown"
         print(f"{person['name']} ({age}, {profession})")
+    for person in hosts:
+        age = person["age"] if person["age"] else "age unknown"
+        profession = person["profession"] if person["profession"] else "profession unknown"
+        print(f"Host: {person['name']}, {age}, {profession}")
     print()
 
     print(recap["conclusion"])

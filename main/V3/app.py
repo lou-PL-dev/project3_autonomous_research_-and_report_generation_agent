@@ -29,13 +29,13 @@ def format_audience_reaction(reaction) -> str:
         lines.append("\nWhat fans liked:")
         lines += [f"- {item}" for item in reaction["liked"]]
     if reaction.get("criticism"):
-        lines.append("\nPoints of criticism:")
+        lines.append("\nWhat is criticized:")
         lines += [f"- {item}" for item in reaction["criticism"]]
     if reaction.get("themes"):
-        lines.append("\nNotable fan themes:")
+        lines.append("\nMain themes:")
         lines += [f"- {item}" for item in reaction["themes"]]
     if reaction.get("sample_quotes"):
-        lines.append("\nSample reactions:")
+        lines.append("\nBest Quotes:")
         lines += [f"- \"{q.get('text', '')}\" ({q.get('context', '')})" for q in reaction["sample_quotes"]]
     return "\n".join(lines)
 
@@ -46,12 +46,15 @@ def reshape_for_frontend(recap: dict) -> dict:
     ep_title = recap["highlights"]["episode_title"]
     episode_label = f"Episode {ep_num}" + (f": {ep_title}" if ep_title else "")
 
+    ordered = [p for p in recap["participants"] if not p.get("is_host")] + \
+              [p for p in recap["participants"] if p.get("is_host")]
     participants = []
-    for person in recap["participants"]:
+    for person in ordered:
         participants.append({
             "name": person["name"],
             "age": person["age"] if person["age"] else "unknown",
             "occupation": person["profession"] if person["profession"] else "unknown",
+            "isHost": bool(person.get("is_host")),
         })
 
     return {

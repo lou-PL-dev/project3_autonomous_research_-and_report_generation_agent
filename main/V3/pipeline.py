@@ -905,6 +905,13 @@ Return ONLY valid JSON, no markdown fences:
 }}
 
 CRITICAL RULES:
+- NEVER attribute an action or reaction to a named person unless that specific name is
+  directly, explicitly tied to that specific action in the source material (the episode
+  context or the comment itself). If a name appears in the comments in one context, do not
+  reuse it for a different event or person, e.g. do not call Julia's mom "Kinga" just because
+  "Kinga" appears somewhere else in the comments, they are different, unrelated people. When
+  unsure exactly who a comment is referring to, describe the event without guessing a name
+  rather than risk attaching the wrong one.
 - Match the tone: excited, a little dramatic, conversational, ALL CAPS or an exclamation point
   here and there where it actually fits, the same voice as the rest of this recap. Not a
   formal report, not "viewers expressed mixed sentiments regarding..."
@@ -1228,9 +1235,24 @@ nothing from it at all.
                     return i
             return None
 
+        def find_cast_info(tmdb_name: str) -> dict:
+            tmdb_lower = tmdb_name.lower()
+            if tmdb_lower in cast_lookup:
+                return cast_lookup[tmdb_lower]
+            # Fallback: TMDB and the cast CSV sometimes use different naming
+            # conventions for the same person (e.g. TMDB's "Julia Maria" vs the
+            # CSV's "Julia Dumańska", first+middle vs first+last). Try a
+            # first-token match, only if it resolves to exactly one candidate,
+            # to avoid misattributing data between two different people who
+            # happen to share a first name.
+            tmdb_first = tmdb_lower.split()[0] if tmdb_lower.split() else ""
+            candidates = [v for k, v in cast_lookup.items() if k.split() and k.split()[0] == tmdb_first]
+            return candidates[0] if len(candidates) == 1 else {}
+
         for person in current_ep_tmdb:
             tmdb_name = person["name"]
-            info = cast_lookup.get(tmdb_name.lower(), {})
+            is_host = "host" in person.get("role", "").lower()
+            info = find_cast_info(tmdb_name)
             match_idx = find_match_index(tmdb_name)
 
             if match_idx is not None:
@@ -1238,6 +1260,7 @@ nothing from it at all.
                 name_upgraded = len(tmdb_name.split()) > len(existing["name"].split())
                 if name_upgraded:
                     existing["name"] = tmdb_name
+                existing["is_host"] = is_host
                 # Once the identity is confirmed/disambiguated via TMDB, cast CSV
                 # data is authoritative for THAT specific person, it overrides
                 # rather than just fills gaps: the model's old age/profession may
@@ -1255,6 +1278,7 @@ nothing from it at all.
                     "name": tmdb_name,
                     "age": info.get("age"),
                     "profession": info.get("profession"),
+                    "is_host": is_host,
                 })
 
     print(f"[generate] attempt {state.get('attempts', 0) + 1}")
