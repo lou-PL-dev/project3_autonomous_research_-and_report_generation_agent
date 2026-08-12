@@ -5,6 +5,7 @@ and phase resolution from indexed chunks.
 import json
 import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
@@ -132,13 +133,46 @@ def node_index(state: dict) -> dict:
                 "source_title": source["title"], "text": chunks[chunk_idx],
             })
 
+    # Tagging batches are independent LLM calls, run them concurrently instead
+    # of one at a time.
+    batches = [tag_queue[i:i + TAG_BATCH_SIZE] for i in range(0, len(tag_queue), TAG_BATCH_SIZE)]
     tags_by_id: dict[tuple[int, int], dict] = {}
-    for batch_start in range(0, len(tag_queue), TAG_BATCH_SIZE):
-        batch = tag_queue[batch_start:batch_start + TAG_BATCH_SIZE]
-        batch_tags = tag_chunks_batch(client, batch)
-        tags_by_id.update(batch_tags)
+    if batches:
+        # No artificial worker cap here: these are independent LLM calls and
+        # capping at 8 meant 12 batches ran in two sequential waves instead of
+        # one, which was the single biggest cost in this node (~27s of it).
+        with ThreadPoolExecutor(max_workers=len(batches)) as pool:
+            for batch_tags in pool.map(lambda b: tag_chunks_batch(client, b), batches):
+                tags_by_id.update(batch_tags)
     print(f"[index] tagged {len(tags_by_id)}/{len(tag_queue)} chunks across "
           f"{len(state['selected_sources'])} selected sources (source-first: not the full fetch pool)")
+
+    # Embed everything in one (or a few capped-size) call(s) instead of one
+    # embeddings.create round trip per source, this was the single biggest
+    # source of sequential network latency in this node.
+    flat_chunks: list[str] = []
+    flat_positions: list[tuple[int, int]] = []
+    for source_idx, source in enumerate(state["selected_sources"]):
+        for chunk_idx in range(len(source_chunks[source_idx])):
+            flat_chunks.append(source_chunks[source_idx][chunk_idx])
+            flat_positions.append((source_idx, chunk_idx))
+
+    EMBED_BATCH_SIZE = 200  # stay well under the embeddings endpoint's per-request item/token limits
+    embed_batches = [
+        (flat_positions[i:i + EMBED_BATCH_SIZE], flat_chunks[i:i + EMBED_BATCH_SIZE])
+        for i in range(0, len(flat_chunks), EMBED_BATCH_SIZE)
+    ]
+
+    def embed_batch(batch):
+        positions, texts = batch
+        response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+        return list(zip(positions, (item.embedding for item in response.data)))
+
+    embeddings_by_position: dict[tuple[int, int], list[float]] = {}
+    if embed_batches:
+        with ThreadPoolExecutor(max_workers=len(embed_batches)) as pool:
+            for pairs in pool.map(embed_batch, embed_batches):
+                embeddings_by_position.update(pairs)
 
     all_chunks = []
     vectors_to_upsert = []
@@ -146,7 +180,6 @@ def node_index(state: dict) -> dict:
         chunks = source_chunks[source_idx]
         if not chunks:
             continue
-        embeddings = client.embeddings.create(model=EMBEDDING_MODEL, input=chunks)
         title_start, title_end = source["episode_start"], source["episode_end"]
 
         for chunk_idx, chunk_text in enumerate(chunks):
@@ -179,12 +212,16 @@ def node_index(state: dict) -> dict:
                 "source_url": source["url"], "source_title": source["title"], "text": chunk_text,
             }
             all_chunks.append(metadata)
-            vectors_to_upsert.append({"id": chunk_id, "values": embeddings.data[chunk_idx].embedding, "metadata": metadata})
+            vectors_to_upsert.append({"id": chunk_id, "values": embeddings_by_position[(source_idx, chunk_idx)], "metadata": metadata})
 
-    for i in range(0, len(vectors_to_upsert), UPSERT_BATCH_SIZE):
-        batch = vectors_to_upsert[i:i + UPSERT_BATCH_SIZE]
-        if batch:
-            index.upsert(vectors=batch, namespace=namespace)
+    upsert_batches = [
+        vectors_to_upsert[i:i + UPSERT_BATCH_SIZE]
+        for i in range(0, len(vectors_to_upsert), UPSERT_BATCH_SIZE)
+        if vectors_to_upsert[i:i + UPSERT_BATCH_SIZE]
+    ]
+    if upsert_batches:
+        with ThreadPoolExecutor(max_workers=len(upsert_batches)) as pool:
+            list(pool.map(lambda batch: index.upsert(vectors=batch, namespace=namespace), upsert_batches))
 
     print(f"[index] {len(all_chunks)} chunks tagged and upserted")
     return {"chunks": all_chunks}

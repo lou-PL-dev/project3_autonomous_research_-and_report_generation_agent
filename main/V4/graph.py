@@ -1,5 +1,7 @@
 """RecapState, graph assembly, and the run_pipeline entry point."""
 
+import time
+from functools import wraps
 from typing import TypedDict
 
 from dotenv import load_dotenv
@@ -13,6 +15,19 @@ from season_index import node_load_season_index
 from spoiler_check import node_spoiler_check, route_after_spoiler_check
 from youtube import node_analyze_fan_reaction, node_fetch_youtube_comments
 from retrieval import node_retrieve
+
+
+def timed(name: str, fn):
+    """Wrap a node function to print its wall-clock time, for locating the
+    remaining bottlenecks after parallelizing the I/O-bound nodes."""
+    @wraps(fn)
+    def wrapper(state):
+        start = time.perf_counter()
+        result = fn(state)
+        elapsed = time.perf_counter() - start
+        print(f"[timing] {name}: {elapsed:.2f}s")
+        return result
+    return wrapper
 
 
 class RecapState(TypedDict):
@@ -37,16 +52,16 @@ class RecapState(TypedDict):
 
 def build_graph():
     graph = StateGraph(RecapState)
-    graph.add_node("fetch_show_metadata", node_fetch_show_metadata)
-    graph.add_node("plan_and_search", node_plan_and_search)
-    graph.add_node("load_season_index", node_load_season_index)
-    graph.add_node("rank_and_select", node_rank_and_select)
-    graph.add_node("fetch_youtube_comments", node_fetch_youtube_comments)
-    graph.add_node("index", node_index)
-    graph.add_node("retrieve", node_retrieve)
-    graph.add_node("analyze_fan_reaction", node_analyze_fan_reaction)
-    graph.add_node("generate", node_generate)
-    graph.add_node("spoiler_check", node_spoiler_check)
+    graph.add_node("fetch_show_metadata", timed("fetch_show_metadata", node_fetch_show_metadata))
+    graph.add_node("plan_and_search", timed("plan_and_search", node_plan_and_search))
+    graph.add_node("load_season_index", timed("load_season_index", node_load_season_index))
+    graph.add_node("rank_and_select", timed("rank_and_select", node_rank_and_select))
+    graph.add_node("fetch_youtube_comments", timed("fetch_youtube_comments", node_fetch_youtube_comments))
+    graph.add_node("index", timed("index", node_index))
+    graph.add_node("retrieve", timed("retrieve", node_retrieve))
+    graph.add_node("analyze_fan_reaction", timed("analyze_fan_reaction", node_analyze_fan_reaction))
+    graph.add_node("generate", timed("generate", node_generate))
+    graph.add_node("spoiler_check", timed("spoiler_check", node_spoiler_check))
 
     graph.set_entry_point("fetch_show_metadata")
     graph.add_edge("fetch_show_metadata", "plan_and_search")

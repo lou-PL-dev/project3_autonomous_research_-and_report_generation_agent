@@ -4,6 +4,7 @@ reaction), phase-based drama filter (V1's proven design).
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI
 from pinecone import Pinecone
@@ -50,54 +51,62 @@ def node_retrieve(state: dict) -> dict:
     phase_idx = PHASES.index(phase) if phase in PHASES else 0
     strictly_before_phases = PHASES[:phase_idx]
 
-    bios_semantic = pinecone_query(client, index, f"Love is Blind {edition} season {season} cast member names ages professions occupations", general_filter, top_k=20, namespace=namespace)
     # Cast ground truth (season_indexes/*_cast.csv) guaranteed inclusion, not left
     # to compete on semantic similarity against Rotten Tomatoes/IMDb pages, that
     # competition is exactly why bios kept coming back empty all night.
     ground_truth_bios_filter = {**base_filter, "is_ground_truth": {"$eq": True}, "episode_start": {"$eq": -1}}
-    ground_truth_bios = pinecone_query(client, index, f"Love is Blind {edition} season {season} cast", ground_truth_bios_filter, top_k=20, namespace=namespace)
-    bios = bios_semantic + ground_truth_bios
+    unknown_phase_safe_filter = {**base_filter, "phase": {"$eq": "unknown"}, "episode_start": {"$gte": 0}, "episode_end": {"$lte": episode}}
 
-    drama_general_raw = pinecone_query(client, index, f"Love is Blind {edition} season {season} main storylines couples conflicts", general_filter, top_k=10, namespace=namespace)
+    # All of the following queries are independent (different filters/text),
+    # fire them concurrently instead of one round trip at a time, each is its
+    # own embedding call + Pinecone query over the network.
+    tasks = {
+        "bios_semantic": (f"Love is Blind {edition} season {season} cast member names ages professions occupations", general_filter, 20),
+        "ground_truth_bios": (f"Love is Blind {edition} season {season} cast", ground_truth_bios_filter, 20),
+        "drama_general_raw": (f"Love is Blind {edition} season {season} main storylines couples conflicts", general_filter, 10),
+        "drama_unknown_phase": (f"Love is Blind {edition} season {season} drama and relationships so far", unknown_phase_safe_filter, 10),
+        "this_episode_exact": (f"Love is Blind {edition} season {season} episode {episode} events", exact_episode_filter, 20),
+        "reaction_cutoff": (f"Love is Blind {edition} season {season} episode {episode} fan reaction audience opinion", up_to_cutoff_filter, 6),
+        "reaction_general": (f"Love is Blind {edition} season {season} fan reaction audience opinion", general_filter, 3),
+    }
+    if strictly_before_phases:
+        known_phase_filter = {**base_filter, "phase": {"$in": strictly_before_phases}}
+        ground_truth_filter = {**base_filter, "is_ground_truth": {"$eq": True}, "phase": {"$in": strictly_before_phases}}
+        tasks["drama_known_phase"] = (f"Love is Blind {edition} season {season} drama and relationships so far", known_phase_filter, 15)
+        tasks["ground_truth_drama"] = (f"Love is Blind {edition} season {season}", ground_truth_filter, 20)
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = {
+            name: pool.submit(pinecone_query, client, index, query_text, filt, top_k, namespace)
+            for name, (query_text, filt, top_k) in tasks.items()
+        }
+        results = {name: f.result() for name, f in futures.items()}
+
+    bios = results["bios_semantic"] + results["ground_truth_bios"]
+
     # Deterministic backstop: a chunk tagged "general" (episode_start=-1) can still
     # explicitly name the current episode if the LLM tagger was too conservative
     # and defaulted to null instead of catching it. Reject those here rather than
     # trust the tag blindly, this is what let a Rotten Tomatoes season page leak
     # episode-6-specific content into main_drama despite phase filtering.
     current_episode_mention = re.compile(rf"\bepisode\s+{episode}\b", re.IGNORECASE)
+    drama_general_raw = results["drama_general_raw"]
     drama_general = [m for m in drama_general_raw if not current_episode_mention.search(m["text"])]
     rejected_count = len(drama_general_raw) - len(drama_general)
     if rejected_count:
         print(f"[retrieve] rejected {rejected_count} 'general' chunks from main_drama, "
               f"explicitly mention episode {episode} despite being untagged")
 
-    drama_episodes = []
-    if strictly_before_phases:
-        known_phase_filter = {**base_filter, "phase": {"$in": strictly_before_phases}}
-        drama_episodes = pinecone_query(client, index, f"Love is Blind {edition} season {season} drama and relationships so far", known_phase_filter, top_k=15, namespace=namespace)
-    # Unknown-phase chunks are a safety-net fallback only, phase can't tell us
-    # anything about them, so episode range is the only signal available, kept
-    # strictly under the cutoff (not just "before current phase") since that's
-    # the only guarantee we actually have for them.
-    unknown_phase_safe_filter = {**base_filter, "phase": {"$eq": "unknown"}, "episode_start": {"$gte": 0}, "episode_end": {"$lte": episode}}
-    drama_episodes += pinecone_query(client, index, f"Love is Blind {edition} season {season} drama and relationships so far", unknown_phase_safe_filter, top_k=10, namespace=namespace)
-    # Ground-truth chunks are guaranteed inclusion, not left to compete on semantic
-    # similarity against much larger web transcripts. Uses the same strict
-    # phase-before-current filter as web content, since ground truth has real,
-    # accurate phase data and shouldn't fall back to the weaker episode-number proxy.
-    ground_truth_drama = []
-    if strictly_before_phases:
-        ground_truth_filter = {**base_filter, "is_ground_truth": {"$eq": True}, "phase": {"$in": strictly_before_phases}}
-        ground_truth_drama = pinecone_query(client, index, f"Love is Blind {edition} season {season}", ground_truth_filter, top_k=20, namespace=namespace)
+    drama_episodes = results.get("drama_known_phase", []) + results["drama_unknown_phase"]
+    ground_truth_drama = results.get("ground_truth_drama", [])
     drama_episodes = cap_per_source(drama_episodes, max_per_source=3) + ground_truth_drama
 
-    this_episode = pinecone_query(client, index, f"Love is Blind {edition} season {season} episode {episode} events", exact_episode_filter, top_k=20, namespace=namespace)
+    this_episode = results["this_episode_exact"]
     if len(cap_per_source(this_episode, max_per_source=3)) < 5:
         this_episode += pinecone_query(client, index, f"Love is Blind {edition} season {season} episode {episode} events", up_to_cutoff_filter, top_k=10, namespace=namespace)
     this_episode = cap_per_source(this_episode, max_per_source=3)
 
-    reaction = pinecone_query(client, index, f"Love is Blind {edition} season {season} episode {episode} fan reaction audience opinion", up_to_cutoff_filter, top_k=6, namespace=namespace)
-    reaction += pinecone_query(client, index, f"Love is Blind {edition} season {season} fan reaction audience opinion", general_filter, top_k=3, namespace=namespace)
+    reaction = results["reaction_cutoff"] + results["reaction_general"]
 
     seen_texts = set()
 

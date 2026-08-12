@@ -5,6 +5,7 @@ web source gets asked "which episode is this?".
 
 import csv
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -109,8 +110,15 @@ def node_fetch_show_metadata(state: dict) -> dict:
     elif not tmdb_key:
         print("[tmdb] no TMDB_API_KEY found, skipping")
     else:
-        for ep in range(1, episode + 1):
-            tmdb_participants[ep] = fetch_tmdb_episode_participants(tmdb_id, season, ep, tmdb_key)
+        # Each episode's participant fetch is an independent HTTP request, run
+        # them concurrently instead of one-by-one (this loop scales with the
+        # cutoff episode number, episode 8 meant 8 sequential round trips).
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = pool.map(
+                lambda ep: (ep, fetch_tmdb_episode_participants(tmdb_id, season, ep, tmdb_key)),
+                range(1, episode + 1),
+            )
+            tmdb_participants = dict(results)
         current_ep_people = tmdb_participants.get(episode, [])
         print(f"[tmdb] fetched participants for episodes 1-{episode}, "
               f"episode {episode} itself has {len(current_ep_people)}:")

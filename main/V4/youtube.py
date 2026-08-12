@@ -5,6 +5,7 @@ comment-implied spoilers) and LLM synthesis into structured reaction data.
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from openai import OpenAI
@@ -51,7 +52,8 @@ def node_fetch_youtube_comments(state: dict) -> dict:
         return {"youtube_comments": []}
 
     episode = state["episode"]
-    all_comments = []
+
+    eligible = []
     for source in state["selected_sources"]:
         url = source.get("url", "")
         if "youtube.com" not in url and "youtu.be" not in url:
@@ -64,12 +66,25 @@ def node_fetch_youtube_comments(state: dict) -> dict:
         video_id = extract_youtube_video_id(url)
         if not video_id:
             continue
+        eligible.append((source, video_id))
+
+    def fetch_for(pair):
+        source, video_id = pair
         comments = fetch_video_comments(video_id, api_key)
         for c in comments:
             c["source_title"] = source["title"]
-            c["source_url"] = url
-        all_comments.extend(comments)
-        print(f"[youtube] fetched {len(comments)} comments from ep {ep_start}-{ep_end}: {source['title']}")
+            c["source_url"] = source["url"]
+        print(f"[youtube] fetched {len(comments)} comments from "
+              f"ep {source.get('episode_start')}-{source.get('episode_end')}: {source['title']}")
+        return comments
+
+    all_comments = []
+    if eligible:
+        # Each video's comment fetch is an independent HTTP request, run them
+        # concurrently instead of one-by-one.
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for comments in pool.map(fetch_for, eligible):
+                all_comments.extend(comments)
 
     if not all_comments:
         print("[youtube] no eligible (fully <= cutoff) YouTube sources with comments found")
