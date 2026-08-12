@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 
+from cost_tracker import BudgetExceededError
 from graph import run_pipeline
 
 
@@ -80,7 +81,11 @@ def main():
     parser.add_argument("--episode", type=int, required=True)
     args = parser.parse_args()
 
-    recap = run_pipeline(args.edition, args.season, args.episode)
+    try:
+        recap = run_pipeline(args.edition, args.season, args.episode)
+    except BudgetExceededError as e:
+        print(f"Run refused: {e}")
+        return
     print_recap(args.edition, args.season, recap)
 
 

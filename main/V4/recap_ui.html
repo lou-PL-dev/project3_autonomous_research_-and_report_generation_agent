@@ -24,7 +24,7 @@
   .card{background:rgba(20,6,38,.5);border:1px solid rgba(245,212,148,.22);border-radius:18px;padding:28px 30px}
   .card h2{font-size:19px;margin:0 0 10px;color:#ffe066;letter-spacing:.03em}
   .card p{font-size:15px;line-height:1.7;color:rgba(224,218,232,.88);margin:0}
-  .hidden{display:none}
+  .hidden{display:none!important}
 </style>
 </head>
 <body>
@@ -64,6 +64,12 @@
   </div>
 
   <p id="loading-msg" class="hidden" style="margin-top:24px;font-size:14px;color:rgba(255,255,255,.75);text-align:center">Hold on, I'm getting into everyone's business rn...</p>
+  <div id="progress-wrap" class="hidden" style="margin-top:14px;width:100%;max-width:420px;display:flex;flex-direction:column;gap:8px">
+    <div style="height:8px;border-radius:999px;background:rgba(255,255,255,.15);overflow:hidden">
+      <div id="progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#946b17,#f5cf5a);border-radius:999px;transition:width .5s ease"></div>
+    </div>
+    <p id="progress-step-label" style="margin:0;font-size:13px;color:rgba(255,255,255,.7);text-align:center;min-height:16px"></p>
+  </div>
   <p id="error-msg" class="hidden" style="margin-top:24px;font-size:14px;color:#ff8080;text-align:center;max-width:480px"></p>
 
   <div id="results" class="hidden" style="width:100%;max-width:720px;margin-top:48px;flex-direction:column;gap:24px">
@@ -136,6 +142,9 @@ const submitBtn = document.getElementById('submit-btn');
 const loadingMsg = document.getElementById('loading-msg');
 const errorMsg = document.getElementById('error-msg');
 const results = document.getElementById('results');
+const progressWrap = document.getElementById('progress-wrap');
+const progressBar = document.getElementById('progress-bar');
+const progressStepLabel = document.getElementById('progress-step-label');
 
 let LIBRARY = {}; // token (e.g. "poland") -> [season numbers], from /api/library
 let availableEditions = EDITIONS;
@@ -252,9 +261,37 @@ function renderRecap(data, episode) {
   results.style.display = 'flex';
 }
 
+function updateProgress(stepIndex, totalSteps, stepLabel) {
+  const pct = totalSteps ? Math.min(100, Math.round((stepIndex / totalSteps) * 100)) : 0;
+  progressBar.style.width = `${pct}%`;
+  progressStepLabel.textContent = stepLabel || '';
+}
+
+// Polls /api/recap/status until the background job finishes, so the browser
+// never holds one open request for the full 30-90s pipeline run. Resolves
+// with the reshaped recap payload, or throws on error/timeout.
+async function pollJob(jobId) {
+  const POLL_INTERVAL_MS = 900;
+  const MAX_POLLS = 200; // ~3 minutes ceiling, well above a normal run
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    const response = await fetch(`${API_BASE}/api/recap/status/${jobId}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Lost track of that recap job.');
+    }
+    updateProgress(data.stepIndex, data.totalSteps, data.stepLabel);
+    if (data.status === 'done') return data.result;
+    if (data.status === 'error') throw new Error(data.error || 'Something went wrong generating the recap.');
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+  throw new Error('This is taking way too long, something might be stuck.');
+}
+
 submitBtn.addEventListener('click', async () => {
   results.classList.add('hidden');
   errorMsg.classList.add('hidden');
+  updateProgress(0, 1, '');
 
   if (!selectedEdition) {
     errorMsg.textContent = "Select a Love is Blind Edition or I won't find the drama!";
@@ -268,23 +305,26 @@ submitBtn.addEventListener('click', async () => {
   const shortEdition = EDITION_SHORT_NAMES[edition] || edition;
 
   loadingMsg.classList.remove('hidden');
+  progressWrap.classList.remove('hidden');
   submitBtn.disabled = true;
 submitBtn.textContent = 'SPILLING THE TEA...';
 
   const params = new URLSearchParams({ edition: shortEdition, season, episode });
 
   try {
-    const response = await fetch(`${API_BASE}/api/recap?${params}`);
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Something went wrong generating the recap.');
+    const startResponse = await fetch(`${API_BASE}/api/recap/start?${params}`, { method: 'POST' });
+    const startData = await startResponse.json();
+    if (!startResponse.ok) {
+      throw new Error(startData.error || 'Could not start the recap job.');
     }
+    const data = await pollJob(startData.job_id);
     renderRecap(data, episode);
   } catch (err) {
     errorMsg.textContent = `Something broke: ${err.message || 'Could not reach the recap server. Is app.py running?'}`;
     errorMsg.classList.remove('hidden');
   } finally {
     loadingMsg.classList.add('hidden');
+    progressWrap.classList.add('hidden');
     submitBtn.disabled = false;
     submitBtn.textContent = 'SPILL THE TEA';
   }

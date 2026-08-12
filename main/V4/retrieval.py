@@ -11,6 +11,7 @@ from openai import OpenAI
 from pinecone import Pinecone
 
 from config import EMBEDDING_MODEL, PHASES, PINECONE_INDEX_NAME
+from cost_tracker import record_usage
 from indexing import resolve_phase
 from research import namespace_for
 
@@ -18,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 def pinecone_query(client: OpenAI, index, query_text: str, filter_dict: dict, top_k: int, namespace: str) -> list[dict]:
-    embedding = client.embeddings.create(model=EMBEDDING_MODEL, input=[query_text]).data[0].embedding
+    response = client.embeddings.create(model=EMBEDDING_MODEL, input=[query_text])
+    record_usage(EMBEDDING_MODEL, response.usage)
+    embedding = response.data[0].embedding
     result = index.query(vector=embedding, top_k=top_k, filter=filter_dict, include_metadata=True, namespace=namespace)
     return [m["metadata"] for m in result["matches"]]
 

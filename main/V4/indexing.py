@@ -22,6 +22,7 @@ from config import (
     TAG_BATCH_SIZE,
     UPSERT_BATCH_SIZE,
 )
+from cost_tracker import record_usage
 from research import namespace_for
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ Return ONLY a JSON array, no markdown fences:
         model=OPENAI_MINI_MODEL, temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
+    record_usage(OPENAI_MINI_MODEL, response.usage)
     raw = response.choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.strip("`").replace("json\n", "", 1)
@@ -170,6 +172,7 @@ def node_index(state: dict) -> dict:
     def embed_batch(batch):
         positions, texts = batch
         response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+        record_usage(EMBEDDING_MODEL, response.usage)
         return list(zip(positions, (item.embedding for item in response.data)))
 
     embeddings_by_position: dict[tuple[int, int], list[float]] = {}

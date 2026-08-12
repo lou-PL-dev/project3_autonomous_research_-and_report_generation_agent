@@ -8,6 +8,7 @@ import logging
 from openai import OpenAI
 
 from config import MAX_SPOILER_RETRIES, OPENAI_MINI_MODEL
+from cost_tracker import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ Return ONLY JSON: {{"passed": true_or_false, "issues": ["specific issue 1", ...]
 If passed is true, issues should be an empty array."""
 
     response = client.chat.completions.create(model=OPENAI_MINI_MODEL, temperature=0, messages=[{"role": "user", "content": prompt}])
+    record_usage(OPENAI_MINI_MODEL, response.usage)
     raw = response.choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.strip("`").replace("json\n", "", 1)

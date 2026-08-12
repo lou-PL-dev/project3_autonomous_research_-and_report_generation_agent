@@ -22,6 +22,7 @@ from config import (
     NOISE_DOMAINS,
     OPENAI_MINI_MODEL,
 )
+from cost_tracker import record_langchain_usage
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +233,7 @@ explicitly confirm whether you found (a) early-episode/Pods-phase content and (b
 episode-only source for episode {episode} specifically."""
 
     result = agent.invoke({"messages": [("user", planning_prompt)]})
+    record_langchain_usage(OPENAI_MINI_MODEL, result["messages"])
     tool_calls = sum(1 for m in result["messages"] if getattr(m, "tool_calls", None))
     logger.info("agent made %d unique source discoveries across its search calls", len(collected))
     final_message = result["messages"][-1].content if result["messages"] else ""

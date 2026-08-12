@@ -8,6 +8,7 @@ from typing import TypedDict
 from dotenv import load_dotenv
 from langgraph.graph import END, StateGraph
 
+from cost_tracker import check_budget_available, commit_run_to_ledger, reset_run
 from generation import node_generate
 from indexing import node_index
 from logging_config import configure_logging
@@ -21,17 +22,31 @@ from retrieval import node_retrieve
 logger = logging.getLogger(__name__)
 
 
-def timed(name: str, fn):
+def timed(name: str, fn, on_step=None):
     """Wrap a node function to log its wall-clock time, for locating the
-    remaining bottlenecks after parallelizing the I/O-bound nodes."""
+    remaining bottlenecks after parallelizing the I/O-bound nodes. Also fires
+    on_step(name) right before the node runs, this is the only hook point
+    Flask's job runner needs to report live per-node progress to the UI.
+    """
     @wraps(fn)
     def wrapper(state):
+        if on_step:
+            on_step(name)
         start = time.perf_counter()
         result = fn(state)
         elapsed = time.perf_counter() - start
         logger.info("[timing] %s: %.2fs", name, elapsed)
         return result
     return wrapper
+
+
+# Single source of truth for node order, shared with app.py so the job-status
+# endpoint's progress fraction (step_index / len(NODE_ORDER)) can't drift out
+# of sync with the actual graph.
+NODE_ORDER = [
+    "fetch_show_metadata", "plan_and_search", "load_season_index", "rank_and_select",
+    "fetch_youtube_comments", "index", "retrieve", "analyze_fan_reaction", "generate", "spoiler_check",
+]
 
 
 class RecapState(TypedDict):
@@ -54,18 +69,18 @@ class RecapState(TypedDict):
     attempts: int
 
 
-def build_graph():
+def build_graph(on_step=None):
     graph = StateGraph(RecapState)
-    graph.add_node("fetch_show_metadata", timed("fetch_show_metadata", node_fetch_show_metadata))
-    graph.add_node("plan_and_search", timed("plan_and_search", node_plan_and_search))
-    graph.add_node("load_season_index", timed("load_season_index", node_load_season_index))
-    graph.add_node("rank_and_select", timed("rank_and_select", node_rank_and_select))
-    graph.add_node("fetch_youtube_comments", timed("fetch_youtube_comments", node_fetch_youtube_comments))
-    graph.add_node("index", timed("index", node_index))
-    graph.add_node("retrieve", timed("retrieve", node_retrieve))
-    graph.add_node("analyze_fan_reaction", timed("analyze_fan_reaction", node_analyze_fan_reaction))
-    graph.add_node("generate", timed("generate", node_generate))
-    graph.add_node("spoiler_check", timed("spoiler_check", node_spoiler_check))
+    graph.add_node("fetch_show_metadata", timed("fetch_show_metadata", node_fetch_show_metadata, on_step))
+    graph.add_node("plan_and_search", timed("plan_and_search", node_plan_and_search, on_step))
+    graph.add_node("load_season_index", timed("load_season_index", node_load_season_index, on_step))
+    graph.add_node("rank_and_select", timed("rank_and_select", node_rank_and_select, on_step))
+    graph.add_node("fetch_youtube_comments", timed("fetch_youtube_comments", node_fetch_youtube_comments, on_step))
+    graph.add_node("index", timed("index", node_index, on_step))
+    graph.add_node("retrieve", timed("retrieve", node_retrieve, on_step))
+    graph.add_node("analyze_fan_reaction", timed("analyze_fan_reaction", node_analyze_fan_reaction, on_step))
+    graph.add_node("generate", timed("generate", node_generate, on_step))
+    graph.add_node("spoiler_check", timed("spoiler_check", node_spoiler_check, on_step))
 
     graph.set_entry_point("fetch_show_metadata")
     graph.add_edge("fetch_show_metadata", "plan_and_search")
@@ -82,10 +97,12 @@ def build_graph():
     return graph.compile()
 
 
-def run_pipeline(edition: str, season: int, episode: int) -> dict:
+def run_pipeline(edition: str, season: int, episode: int, on_step=None) -> dict:
     load_dotenv()
     configure_logging()
-    app = build_graph()
+    check_budget_available()
+    reset_run()
+    app = build_graph(on_step)
     initial_state = {
         "edition": edition, "season": season, "episode": episode, "phase": "unknown",
         "episode_titles": {}, "tmdb_participants": {},
@@ -94,5 +111,9 @@ def run_pipeline(edition: str, season: int, episode: int) -> dict:
         "chunks": [], "context": "",
         "draft": {}, "spoiler_issues": [], "spoiler_passed": False, "attempts": 0,
     }
-    final_state = app.invoke(initial_state)
-    return final_state["draft"]
+    try:
+        final_state = app.invoke(initial_state)
+        return final_state["draft"]
+    finally:
+        run_cost = commit_run_to_ledger()
+        logger.info("[cost] this run: $%.4f", run_cost)

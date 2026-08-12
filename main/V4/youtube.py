@@ -12,6 +12,7 @@ import requests
 from openai import OpenAI
 
 from config import OPENAI_CHAT_MODEL
+from cost_tracker import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,7 @@ CRITICAL RULES:
 """
 
     response = client.chat.completions.create(model=OPENAI_CHAT_MODEL, temperature=0.3, messages=[{"role": "user", "content": prompt}])
+    record_usage(OPENAI_CHAT_MODEL, response.usage)
     raw = response.choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.strip("`").replace("json\n", "", 1)

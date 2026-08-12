@@ -13,6 +13,20 @@ PINECONE_INDEX_NAME = "love-is-blind-recaps-v2"
 OPENAI_CHAT_MODEL = "gpt-4o"        # generation, fan-reaction synthesis: quality-sensitive writing
 OPENAI_MINI_MODEL = "gpt-4o-mini"   # research planning, chunk tagging, spoiler audit: cheaper/faster tasks
 
+# USD per 1K tokens. Approximate, taken from published OpenAI pricing at the time
+# this was written, not fetched live, re-check against OpenAI's pricing page if
+# spend tracking (below) looks off.
+MODEL_PRICING = {
+    "gpt-4o": {"input": 0.0025, "output": 0.010},
+    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+    "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
+}
+
+# A run is refused before it starts if today's already-recorded spend has met
+# or passed this. 0 (unset DAILY_BUDGET in .env) disables enforcement entirely.
+DAILY_BUDGET = float(os.getenv("DAILY_BUDGET", "0") or 0)
+SPEND_LEDGER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".spend_ledger.json")
+
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 MAX_CHARS_PER_SOURCE = 75000

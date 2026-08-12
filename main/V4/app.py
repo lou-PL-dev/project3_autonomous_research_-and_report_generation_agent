@@ -14,15 +14,53 @@ from flask_cors import CORS
 import csv
 import logging
 import os
+import threading
+import time
+import uuid
 
 from config import EPISODE_INDEX_DIR
-from graph import run_pipeline
+from cost_tracker import BudgetExceededError
+from graph import NODE_ORDER, run_pipeline
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 logger = logging.getLogger(__name__)
+
+# Friendly, in-voice labels for the UI's progress bar, keyed by graph.py's
+# NODE_ORDER so the two can't drift apart silently.
+STEP_LABELS = {
+    "fetch_show_metadata": "Digging up episode info...",
+    "plan_and_search": "Snooping around the internet...",
+    "load_season_index": "Checking the receipts...",
+    "rank_and_select": "Sorting the tea...",
+    "fetch_youtube_comments": "Reading the comments...",
+    "index": "Organizing everything...",
+    "retrieve": "Pulling the juiciest bits...",
+    "analyze_fan_reaction": "Feeling out the vibe...",
+    "generate": "Writing your recap...",
+    "spoiler_check": "Double-checking for spoilers...",
+}
+
+# In-memory job store for the async recap flow: /api/recap/start kicks a
+# pipeline run off in a background thread (the pipeline itself stays fully
+# synchronous, only the Flask request/response cycle stops blocking on it),
+# /api/recap/status/<id> is polled by the UI for live per-node progress.
+# Single-process, in-memory by design, this app has no multi-worker/multi-host
+# deployment yet, if that changes this needs to move to something shared
+# (Redis, a DB row) instead.
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+JOB_TTL_SECONDS = 1800
+
+
+def _purge_old_jobs() -> None:
+    cutoff = time.time() - JOB_TTL_SECONDS
+    with _jobs_lock:
+        stale = [job_id for job_id, job in _jobs.items() if job["created_at"] < cutoff]
+        for job_id in stale:
+            del _jobs[job_id]
 
 
 def load_phase_from_season_index(edition: str, season: int, episode: int) -> str | None:
@@ -110,6 +148,11 @@ def get_library():
 
 @app.route("/api/recap")
 def get_recap():
+    """Synchronous, blocking recap generation. Kept as a simple direct path
+    (curl/scripts/testing); recap_ui.html uses the async job endpoints below
+    instead so the browser isn't left hanging on one open request for the
+    full 30-90s pipeline run.
+    """
     edition = request.args.get("edition", "Poland")
     season = int(request.args.get("season", 1))
     episode = int(request.args.get("episode", 1))
@@ -118,10 +161,90 @@ def get_recap():
         recap = run_pipeline(edition, season, episode)
         recap["phase"] = load_phase_from_season_index(edition, season, episode) or recap.get("phase")
         return jsonify(reshape_for_frontend(recap))
+    except BudgetExceededError as e:
+        return jsonify({"error": str(e)}), 429
     except Exception as e:
         logger.exception("recap generation failed for %s season %s episode %s", edition, season, episode)
         return jsonify({"error": str(e)}), 500
 
 
+def _run_job(job_id: str, edition: str, season: int, episode: int) -> None:
+    def on_step(name: str) -> None:
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job is None:
+                return
+            job["step"] = name
+            job["step_label"] = STEP_LABELS.get(name, name)
+            if name in NODE_ORDER:
+                job["step_index"] = NODE_ORDER.index(name)
+
+    try:
+        recap = run_pipeline(edition, season, episode, on_step=on_step)
+        recap["phase"] = load_phase_from_season_index(edition, season, episode) or recap.get("phase")
+        payload = reshape_for_frontend(recap)
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job is not None:
+                job["status"] = "done"
+                job["result"] = payload
+    except BudgetExceededError as e:
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job is not None:
+                job["status"] = "error"
+                job["error"] = str(e)
+    except Exception as e:
+        logger.exception("recap generation failed for %s season %s episode %s", edition, season, episode)
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job is not None:
+                job["status"] = "error"
+                job["error"] = str(e)
+
+
+@app.route("/api/recap/start", methods=["POST"])
+def start_recap():
+    _purge_old_jobs()
+    edition = request.args.get("edition", "Poland")
+    season = int(request.args.get("season", 1))
+    episode = int(request.args.get("episode", 1))
+
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "status": "running",
+            "step": None,
+            "step_label": "Starting up...",
+            "step_index": 0,
+            "total_steps": len(NODE_ORDER),
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+        }
+    threading.Thread(target=_run_job, args=(job_id, edition, season, episode), daemon=True).start()
+    return jsonify({"job_id": job_id}), 202
+
+
+@app.route("/api/recap/status/<job_id>")
+def recap_status(job_id: str):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return jsonify({"error": "unknown or expired job"}), 404
+        payload = {
+            "status": job["status"],
+            "step": job["step"],
+            "stepLabel": job["step_label"],
+            "stepIndex": job["step_index"],
+            "totalSteps": job["total_steps"],
+        }
+        if job["status"] == "done":
+            payload["result"] = job["result"]
+        elif job["status"] == "error":
+            payload["error"] = job["error"]
+    return jsonify(payload)
+
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5004)
+    app.run(debug=True, port=5004, threaded=True)
