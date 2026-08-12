@@ -19,8 +19,8 @@ def node_generate(state: dict) -> dict:
 
 CRITICAL PODS-PHASE RULE: episode {episode}'s phase is "{phase}". Treat this conservatively
 as Pods. Do not reveal which people end up together, engaged, or paired as couples, even if
-sources describe final pairings. For "participants": return exactly one entry:
-{{"name": "Wait for it!", "age": null, "profession": "Full participant profiles arrive after the Reveal, no spoilers here!"}}
+sources describe final pairings. "participants" should still list the individuals who appear
+in this episode's content, name/age/profession only, never who they're paired with.
 """
 
     retry_note = ""
@@ -114,72 +114,69 @@ nothing from it at all.
     # when TMDB had the correct disambiguated name sitting right there.
     # Age/profession only ever come from the cast CSV, never TMDB's role field,
     # "Self - Contestant" is not real profession data.
-    # Skipped entirely during the Pods-phase placeholder, adding/editing real
-    # names there would defeat the spoiler protection that placeholder exists for.
-    if phase not in ("Pods", "unknown"):
-        cast_lookup = load_cast_lookup(edition, season)
-        current_ep_tmdb = state.get("tmdb_participants", {}).get(episode, [])
-        participants = draft.setdefault("participants", [])
+    cast_lookup = load_cast_lookup(edition, season)
+    current_ep_tmdb = state.get("tmdb_participants", {}).get(episode, [])
+    participants = draft.setdefault("participants", [])
 
-        def find_match_index(tmdb_name: str) -> int | None:
-            tmdb_lower = tmdb_name.lower()
-            tmdb_tokens = set(tmdb_lower.split())
-            for i, p in enumerate(participants):
-                existing = p["name"].lower()
-                if tmdb_lower in existing or existing in tmdb_lower:
-                    return i
-                # First-name-token overlap catches nickname cases (e.g. "Kamil
-                # Uno" vs TMDB's "Kamil Michał Osiak"), approximate but safer
-                # than missing an obvious same-person match entirely.
-                if tmdb_tokens & set(existing.split()):
-                    return i
-            return None
+    def find_match_index(tmdb_name: str) -> int | None:
+        tmdb_lower = tmdb_name.lower()
+        tmdb_tokens = set(tmdb_lower.split())
+        for i, p in enumerate(participants):
+            existing = p["name"].lower()
+            if tmdb_lower in existing or existing in tmdb_lower:
+                return i
+            # First-name-token overlap catches nickname cases (e.g. "Kamil
+            # Uno" vs TMDB's "Kamil Michał Osiak"), approximate but safer
+            # than missing an obvious same-person match entirely.
+            if tmdb_tokens & set(existing.split()):
+                return i
+        return None
 
-        def find_cast_info(tmdb_name: str) -> dict:
-            tmdb_lower = tmdb_name.lower()
-            if tmdb_lower in cast_lookup:
-                return cast_lookup[tmdb_lower]
-            # Fallback: TMDB and the cast CSV sometimes use different naming
-            # conventions for the same person (e.g. TMDB's "Julia Maria" vs the
-            # CSV's "Julia Dumańska", first+middle vs first+last). Try a
-            # first-token match, only if it resolves to exactly one candidate,
-            # to avoid misattributing data between two different people who
-            # happen to share a first name.
-            tmdb_first = tmdb_lower.split()[0] if tmdb_lower.split() else ""
-            candidates = [v for k, v in cast_lookup.items() if k.split() and k.split()[0] == tmdb_first]
-            return candidates[0] if len(candidates) == 1 else {}
+    def find_cast_info(tmdb_name: str) -> dict:
+        tmdb_lower = tmdb_name.lower()
+        if tmdb_lower in cast_lookup:
+            return cast_lookup[tmdb_lower]
+        # Fallback: TMDB and the cast CSV sometimes use different naming
+        # conventions for the same person (e.g. TMDB's "Julia Maria" vs the
+        # CSV's "Julia Dumańska", first+middle vs first+last). Try a
+        # first-token match, only if it resolves to exactly one candidate,
+        # to avoid misattributing data between two different people who
+        # happen to share a first name.
+        tmdb_first = tmdb_lower.split()[0] if tmdb_lower.split() else ""
+        candidates = [v for k, v in cast_lookup.items() if k.split() and k.split()[0] == tmdb_first]
+        return candidates[0] if len(candidates) == 1 else {}
 
-        for person in current_ep_tmdb:
-            tmdb_name = person["name"]
-            is_host = "host" in person.get("role", "").lower()
-            info = find_cast_info(tmdb_name)
-            match_idx = find_match_index(tmdb_name)
+    for person in current_ep_tmdb:
+        tmdb_name = person["name"]
+        is_host = "host" in person.get("role", "").lower()
+        info = find_cast_info(tmdb_name)
+        match_idx = find_match_index(tmdb_name)
 
-            if match_idx is not None:
-                existing = participants[match_idx]
-                name_upgraded = len(tmdb_name.split()) > len(existing["name"].split())
-                if name_upgraded:
-                    existing["name"] = tmdb_name
-                existing["is_host"] = is_host
-                # Once the identity is confirmed/disambiguated via TMDB, cast CSV
-                # data is authoritative for THAT specific person, it overrides
-                # rather than just fills gaps: the model's old age/profession may
-                # have been attached to the wrong, ambiguous identity entirely
-                # (e.g. "Filip" guessed as an Engineer, when the real Filip in
-                # this episode, Filip Lenz, is a Flight Attendant per the CSV).
-                # If the CSV has no entry for this exact person, leave whatever
-                # the model already had rather than erasing it.
-                if info.get("age"):
-                    existing["age"] = info["age"]
-                if info.get("profession"):
-                    existing["profession"] = info["profession"]
-            else:
-                participants.append({
-                    "name": tmdb_name,
-                    "age": info.get("age"),
-                    "profession": info.get("profession"),
-                    "is_host": is_host,
-                })
+        if match_idx is not None:
+            existing = participants[match_idx]
+            name_upgraded = len(tmdb_name.split()) > len(existing["name"].split())
+            if name_upgraded:
+                existing["name"] = tmdb_name
+            existing["is_host"] = is_host
+            # Once the identity is confirmed/disambiguated via TMDB, cast CSV
+            # data is authoritative for THAT specific person, it overrides
+            # rather than just fills gaps: the model's old age/profession may
+            # have been attached to the wrong, ambiguous identity entirely
+            # (e.g. "Filip" guessed as an Engineer, when the real Filip in
+            # this episode, Filip Lenz, is a Flight Attendant per the CSV).
+            # If the CSV has no entry for this exact person, leave whatever
+            # the model already had rather than erasing it.
+            if info.get("age"):
+                existing["age"] = info["age"]
+            if info.get("profession"):
+                existing["profession"] = info["profession"]
+        else:
+            participants.append({
+                "name": tmdb_name,
+                "age": info.get("age"),
+                "profession": info.get("profession"),
+                "is_host": is_host,
+            })
 
     print(f"[generate] attempt {state.get('attempts', 0) + 1}")
     return {"draft": draft, "attempts": state.get("attempts", 0) + 1}

@@ -1,21 +1,22 @@
-"""Hand-verified season index / cast CSV loaders (season_indexes/*.csv), used
-as ground-truth sources that bypass web-search ranking entirely, plus a
-sanity check against OMDb's canonical titles.
+"""Hand-verified season index / cast CSV loaders (season_indexes/episodes/*.csv
+and season_indexes/cast/*.csv), used as ground-truth sources that bypass
+web-search ranking entirely, plus a sanity check against OMDb's canonical titles.
 """
 
 import csv
 import os
 
-from config import SEASON_INDEX_DIR
+from config import CAST_INDEX_DIR, EPISODE_INDEX_DIR
 
 
 def load_cast_lookup(edition: str, season: int) -> dict[str, dict]:
-    """Parse season_indexes/*_cast.csv into a name -> {age, profession} lookup,
-    used to enrich TMDB-supplied names (which have no age/profession of their
-    own) without ever inventing a value not present in the hand-verified CSV.
+    """Parse season_indexes/cast/*_cast.csv into a name -> {age, profession}
+    lookup, used to enrich TMDB-supplied names (which have no age/profession
+    of their own) without ever inventing a value not present in the
+    hand-verified CSV.
     """
     filename = f"{edition.lower().replace(' ', '_')}_s{season}_cast.csv"
-    path = os.path.join(SEASON_INDEX_DIR, filename)
+    path = os.path.join(CAST_INDEX_DIR, filename)
     if not os.path.exists(path):
         return {}
     lookup = {}
@@ -37,7 +38,7 @@ def load_season_index(edition: str, season: int, cutoff_episode: int) -> list[di
     Returns an empty list if no index file exists for this edition/season yet.
     """
     filename = f"{edition.lower().replace(' ', '_')}_s{season}.csv"
-    path = os.path.join(SEASON_INDEX_DIR, filename)
+    path = os.path.join(EPISODE_INDEX_DIR, filename)
     if not os.path.exists(path):
         return []
 
@@ -47,7 +48,7 @@ def load_season_index(edition: str, season: int, cutoff_episode: int) -> list[di
             ep = int(row["episode"])
             if ep > cutoff_episode:
                 continue  # spoiler floor: never load rows past the user's cutoff
-            content = f"{row['title_en']} ({row['title_pl']}). Phase: {row['phase']}. {row['milestones']}"
+            content = f"{row['title_en']} ({row['title_original']}). Phase: {row['phase']}. {row['milestones']}"
             sources.append({
                 "title": f"Season Index: Episode {ep} - {row['title_en']}",
                 "url": f"internal://season-index/{edition.lower()}-s{season}/ep{ep}",
@@ -68,7 +69,7 @@ def load_cast_index(edition: str, season: int) -> list[dict]:
     never gets split apart across the top-k competition retrieval used elsewhere.
     """
     filename = f"{edition.lower().replace(' ', '_')}_s{season}_cast.csv"
-    path = os.path.join(SEASON_INDEX_DIR, filename)
+    path = os.path.join(CAST_INDEX_DIR, filename)
     if not os.path.exists(path):
         return []
 
