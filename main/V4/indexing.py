@@ -3,6 +3,7 @@ and phase resolution from indexed chunks.
 """
 
 import json
+import logging
 import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -15,12 +16,15 @@ from config import (
     CHUNK_SIZE,
     EMBEDDING_DIM,
     EMBEDDING_MODEL,
+    OPENAI_MINI_MODEL,
     PHASES,
     PINECONE_INDEX_NAME,
     TAG_BATCH_SIZE,
     UPSERT_BATCH_SIZE,
 )
 from research import namespace_for
+
+logger = logging.getLogger(__name__)
 
 
 def split_into_chunks(text: str) -> list[str]:
@@ -87,7 +91,7 @@ Return ONLY a JSON array, no markdown fences:
 [{{"source_index": int, "chunk_index": int, "episode_start": int_or_null, "episode_end": int_or_null, "phase": "string_or_null"}}]"""
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini", temperature=0,
+        model=OPENAI_MINI_MODEL, temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
     raw = response.choices[0].message.content.strip()
@@ -114,9 +118,9 @@ def node_index(state: dict) -> dict:
 
     try:
         index.delete(delete_all=True, namespace=namespace)
-        print(f"[index] cleared namespace '{namespace}' before indexing")
+        logger.info("cleared namespace '%s' before indexing", namespace)
     except Exception as e:
-        print(f"[index] namespace clear skipped (likely didn't exist yet): {e}")
+        logger.warning("namespace clear skipped (likely didn't exist yet): %s", e)
 
     source_chunks: list[list[str]] = []
     tag_queue = []
@@ -144,8 +148,8 @@ def node_index(state: dict) -> dict:
         with ThreadPoolExecutor(max_workers=len(batches)) as pool:
             for batch_tags in pool.map(lambda b: tag_chunks_batch(client, b), batches):
                 tags_by_id.update(batch_tags)
-    print(f"[index] tagged {len(tags_by_id)}/{len(tag_queue)} chunks across "
-          f"{len(state['selected_sources'])} selected sources (source-first: not the full fetch pool)")
+    logger.info("tagged %d/%d chunks across %d selected sources (source-first: not the full fetch pool)",
+                len(tags_by_id), len(tag_queue), len(state["selected_sources"]))
 
     # Embed everything in one (or a few capped-size) call(s) instead of one
     # embeddings.create round trip per source, this was the single biggest
@@ -223,7 +227,7 @@ def node_index(state: dict) -> dict:
         with ThreadPoolExecutor(max_workers=len(upsert_batches)) as pool:
             list(pool.map(lambda batch: index.upsert(vectors=batch, namespace=namespace), upsert_batches))
 
-    print(f"[index] {len(all_chunks)} chunks tagged and upserted")
+    logger.info("%d chunks tagged and upserted", len(all_chunks))
     return {"chunks": all_chunks}
 
 

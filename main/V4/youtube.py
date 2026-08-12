@@ -3,12 +3,17 @@ comment-implied spoilers) and LLM synthesis into structured reaction data.
 """
 
 import json
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from openai import OpenAI
+
+from config import OPENAI_CHAT_MODEL
+
+logger = logging.getLogger(__name__)
 
 
 def extract_youtube_video_id(url: str) -> str | None:
@@ -48,7 +53,7 @@ def fetch_video_comments(video_id: str, api_key: str, max_results: int = 20) -> 
 def node_fetch_youtube_comments(state: dict) -> dict:
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
-        print("[youtube] no YOUTUBE_API_KEY found, skipping comment fetch")
+        logger.warning("no YOUTUBE_API_KEY found, skipping comment fetch")
         return {"youtube_comments": []}
 
     episode = state["episode"]
@@ -74,8 +79,8 @@ def node_fetch_youtube_comments(state: dict) -> dict:
         for c in comments:
             c["source_title"] = source["title"]
             c["source_url"] = source["url"]
-        print(f"[youtube] fetched {len(comments)} comments from "
-              f"ep {source.get('episode_start')}-{source.get('episode_end')}: {source['title']}")
+        logger.debug("fetched %d comments from ep %s-%s: %s",
+                     len(comments), source.get("episode_start"), source.get("episode_end"), source["title"])
         return comments
 
     all_comments = []
@@ -87,7 +92,7 @@ def node_fetch_youtube_comments(state: dict) -> dict:
                 all_comments.extend(comments)
 
     if not all_comments:
-        print("[youtube] no eligible (fully <= cutoff) YouTube sources with comments found")
+        logger.warning("no eligible (fully <= cutoff) YouTube sources with comments found")
     return {"youtube_comments": all_comments}
 
 
@@ -101,12 +106,25 @@ def node_fetch_youtube_comments(state: dict) -> dict:
 def node_analyze_fan_reaction(state: dict) -> dict:
     comments = state.get("youtube_comments", [])
     if not comments:
-        print("[fan_reaction] no comments available, skipping analysis")
+        logger.info("no comments available, skipping analysis")
         return {"fan_reaction_analysis": None}
 
     client = OpenAI()
     edition, season, episode = state["edition"], state["season"], state["episode"]
     comments_text = "\n".join(f"({c['likes']} likes) {c['text'][:400]}" for c in comments)
+
+    # Real, on-screen names for THIS watched range (episodes 1..cutoff), used to
+    # stop the synthesis from naming someone a YouTube commenter mentioned who
+    # isn't actually a cast member of this edition/season, comments are
+    # unmoderated and can reference a different show, a different edition, or
+    # an unrelated tangent while still being "explicitly tied" to that sentence.
+    known_names = sorted({
+        person["name"]
+        for people in state.get("tmdb_participants", {}).values()
+        for person in people
+        if person.get("name")
+    })
+    known_names_block = ", ".join(known_names) if known_names else "(no known cast names available)"
 
     # Pull just the episode-specific section from retrieval so the synthesis
     # model knows what actually happened, without this it has no way to tell
@@ -130,6 +148,9 @@ Here is what actually happened in this episode, use this to judge whether a comm
 actually about the show or just tangential chatter:
 {episode_context or "(no episode-specific context available)"}
 
+The real, confirmed cast/hosts for this edition and season, up through episode {episode}:
+{known_names_block}
+
 Comments:
 {comments_text}
 
@@ -150,6 +171,12 @@ CRITICAL RULES:
   "Kinga" appears somewhere else in the comments, they are different, unrelated people. When
   unsure exactly who a comment is referring to, describe the event without guessing a name
   rather than risk attaching the wrong one.
+- NEVER name a specific person unless their name (or an obvious short form/nickname of it,
+  e.g. "Ash" for "Ashley") appears in the CAST/HOSTS list above. YouTube comments are
+  unmoderated and sometimes reference a different show, a different edition or season, or an
+  unrelated tangent while still reading as "about" this video. If a comment names someone who
+  isn't in the cast list, describe what the comment says without using that name, or exclude
+  the comment entirely if it can't be rephrased without a name.
 - Match the tone: excited, a little dramatic, conversational, ALL CAPS or an exclamation point
   here and there where it actually fits, the same voice as the rest of this recap. Not a
   formal report, not "viewers expressed mixed sentiments regarding..."
@@ -173,17 +200,17 @@ CRITICAL RULES:
   the comments provided.
 """
 
-    response = client.chat.completions.create(model="gpt-4o", temperature=0.3, messages=[{"role": "user", "content": prompt}])
+    response = client.chat.completions.create(model=OPENAI_CHAT_MODEL, temperature=0.3, messages=[{"role": "user", "content": prompt}])
     raw = response.choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.strip("`").replace("json\n", "", 1)
     try:
         analysis = json.loads(raw)
     except json.JSONDecodeError:
-        print("[fan_reaction] analysis parse failed, skipping")
+        logger.error("fan reaction analysis parse failed, skipping")
         return {"fan_reaction_analysis": None}
 
-    print(f"[fan_reaction] synthesized from {len(comments)} comments: "
-          f"{len(analysis.get('liked', []))} liked, {len(analysis.get('criticism', []))} criticism, "
-          f"{len(analysis.get('themes', []))} themes, {len(analysis.get('sample_quotes', []))} quotes")
+    logger.info("synthesized from %d comments: %d liked, %d criticism, %d themes, %d quotes",
+                len(comments), len(analysis.get("liked", [])), len(analysis.get("criticism", [])),
+                len(analysis.get("themes", [])), len(analysis.get("sample_quotes", [])))
     return {"fan_reaction_analysis": analysis}

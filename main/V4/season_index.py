@@ -4,9 +4,12 @@ web-search ranking entirely, plus a sanity check against OMDb's canonical titles
 """
 
 import csv
+import logging
 import os
 
 from config import CAST_INDEX_DIR, EPISODE_INDEX_DIR
+
+logger = logging.getLogger(__name__)
 
 
 def load_cast_lookup(edition: str, season: int) -> dict[str, dict]:
@@ -99,22 +102,23 @@ def check_season_index_mismatch(episode_titles: dict[int, str], season_index_row
         omdb_title = episode_titles.get(ep_num)
         csv_title = row.get("_raw_title_en")
         if omdb_title and csv_title and omdb_title.strip().lower() != csv_title.strip().lower():
-            print(f"[omdb] MISMATCH (not fatal) for episode {ep_num}: "
-                  f"OMDb says \"{omdb_title}\", season index says \"{csv_title}\"")
+            logger.warning('MISMATCH (not fatal) for episode %d: OMDb says "%s", season index says "%s"',
+                           ep_num, omdb_title, csv_title)
 
 
 def node_load_season_index(state: dict) -> dict:
     episode_ground_truth = load_season_index(state["edition"], state["season"], state["episode"])
     if episode_ground_truth:
-        print(f"[season_index] loaded {len(episode_ground_truth)} hand-verified episode entries (up to episode {state['episode']})")
+        logger.info("loaded %d hand-verified episode entries (up to episode %d)",
+                    len(episode_ground_truth), state["episode"])
         check_season_index_mismatch(state["episode_titles"], episode_ground_truth)
     else:
-        print(f"[season_index] no episode index file found for {state['edition']} season {state['season']}, skipping")
+        logger.warning("no episode index file found for %s season %d, skipping", state["edition"], state["season"])
 
     cast_ground_truth = load_cast_index(state["edition"], state["season"])
     if cast_ground_truth:
-        print(f"[season_index] loaded hand-verified cast list")
+        logger.info("loaded hand-verified cast list")
     else:
-        print(f"[season_index] no cast index file found for {state['edition']} season {state['season']}, skipping")
+        logger.warning("no cast index file found for %s season %d, skipping", state["edition"], state["season"])
 
     return {"ground_truth_sources": episode_ground_truth + cast_ground_truth}

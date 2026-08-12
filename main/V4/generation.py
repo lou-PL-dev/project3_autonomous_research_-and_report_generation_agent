@@ -3,10 +3,14 @@ participant merge logic.
 """
 
 import json
+import logging
 
 from openai import OpenAI
 
+from config import OPENAI_CHAT_MODEL
 from season_index import load_cast_lookup
+
+logger = logging.getLogger(__name__)
 
 
 def node_generate(state: dict) -> dict:
@@ -87,7 +91,7 @@ nothing from it at all.
 """
 
     response = client.chat.completions.create(
-        model="gpt-4o", temperature=0.4,
+        model=OPENAI_CHAT_MODEL, temperature=0.4,
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"CONTEXT:\n\n{state['context']}"}],
     )
     raw = response.choices[0].message.content.strip()
@@ -178,5 +182,5 @@ nothing from it at all.
                 "is_host": is_host,
             })
 
-    print(f"[generate] attempt {state.get('attempts', 0) + 1}")
+    logger.info("generate attempt %d", state.get("attempts", 0) + 1)
     return {"draft": draft, "attempts": state.get("attempts", 0) + 1}

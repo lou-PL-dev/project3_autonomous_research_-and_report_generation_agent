@@ -4,12 +4,15 @@ web source gets asked "which episode is this?".
 """
 
 import csv
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
 from config import SEASON_INDEX_DIR
+
+logger = logging.getLogger(__name__)
 
 _imdb_ids_cache: dict[str, str] | None = None
 
@@ -74,26 +77,26 @@ def node_fetch_show_metadata(state: dict) -> dict:
     imdb_id = load_imdb_id(edition)
     omdb_key = os.getenv("OMDB_API_KEY") or os.getenv("OMBD_API_KEY")
     if not imdb_id:
-        print(f"[omdb] no hardcoded IMDb ID for {edition} season {season}, skipping")
+        logger.warning("no hardcoded IMDb ID for %s season %d, skipping", edition, season)
     elif not omdb_key:
-        print("[omdb] no OMDB_API_KEY/OMBD_API_KEY found, skipping")
+        logger.warning("no OMDB_API_KEY/OMBD_API_KEY found, skipping")
     else:
         try:
             response = requests.get("http://www.omdbapi.com/", params={"apikey": omdb_key, "i": imdb_id, "Season": season}, timeout=10)
             data = response.json()
             if data.get("Response") != "True":
-                print(f"[omdb] lookup failed: {data.get('Error')}, continuing without it")
+                logger.warning("lookup failed: %s, continuing without it", data.get("Error"))
             else:
                 for ep in data.get("Episodes", []):
                     try:
                         episode_titles[int(ep["Episode"])] = ep["Title"]
                     except (KeyError, ValueError):
                         continue
-                print(f"[omdb] fetched {len(episode_titles)} canonical episode titles for {edition} season {season}")
+                logger.info("fetched %d canonical episode titles for %s season %d", len(episode_titles), edition, season)
                 for ep_num, title in sorted(episode_titles.items()):
-                    print(f"    - ep {ep_num}: {title}")
+                    logger.debug("ep %d: %s", ep_num, title)
         except requests.RequestException as e:
-            print(f"[omdb] request failed ({e}), continuing without it")
+            logger.warning("request failed (%s), continuing without it", e)
 
     # --- TMDB: real per-episode participants (hosts + contestants), used as a
     # SUPPLEMENT to whatever generation finds. Kept PER-EPISODE (not flattened
@@ -106,9 +109,9 @@ def node_fetch_show_metadata(state: dict) -> dict:
     tmdb_id = load_tmdb_id(edition)
     tmdb_key = os.getenv("TMDB_API_KEY")
     if not tmdb_id:
-        print(f"[tmdb] no hardcoded TMDB ID for {edition} season {season}, skipping")
+        logger.warning("no hardcoded TMDB ID for %s season %d, skipping", edition, season)
     elif not tmdb_key:
-        print("[tmdb] no TMDB_API_KEY found, skipping")
+        logger.warning("no TMDB_API_KEY found, skipping")
     else:
         # Each episode's participant fetch is an independent HTTP request, run
         # them concurrently instead of one-by-one (this loop scales with the
@@ -120,9 +123,9 @@ def node_fetch_show_metadata(state: dict) -> dict:
             )
             tmdb_participants = dict(results)
         current_ep_people = tmdb_participants.get(episode, [])
-        print(f"[tmdb] fetched participants for episodes 1-{episode}, "
-              f"episode {episode} itself has {len(current_ep_people)}:")
+        logger.info("fetched participants for episodes 1-%d, episode %d itself has %d",
+                    episode, episode, len(current_ep_people))
         for person in current_ep_people:
-            print(f"    - {person['name']} ({person['role']})")
+            logger.debug("%s (%s)", person["name"], person["role"])
 
     return {"episode_titles": episode_titles, "tmdb_participants": tmdb_participants}

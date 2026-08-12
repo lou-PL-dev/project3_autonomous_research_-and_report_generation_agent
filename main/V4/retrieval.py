@@ -2,6 +2,7 @@
 reaction), phase-based drama filter (V1's proven design).
 """
 
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +13,8 @@ from pinecone import Pinecone
 from config import EMBEDDING_MODEL, PHASES, PINECONE_INDEX_NAME
 from indexing import resolve_phase
 from research import namespace_for
+
+logger = logging.getLogger(__name__)
 
 
 def pinecone_query(client: OpenAI, index, query_text: str, filter_dict: dict, top_k: int, namespace: str) -> list[dict]:
@@ -94,8 +97,8 @@ def node_retrieve(state: dict) -> dict:
     drama_general = [m for m in drama_general_raw if not current_episode_mention.search(m["text"])]
     rejected_count = len(drama_general_raw) - len(drama_general)
     if rejected_count:
-        print(f"[retrieve] rejected {rejected_count} 'general' chunks from main_drama, "
-              f"explicitly mention episode {episode} despite being untagged")
+        logger.info("rejected %d 'general' chunks from main_drama, explicitly mention episode %d despite being untagged",
+                    rejected_count, episode)
 
     drama_episodes = results.get("drama_known_phase", []) + results["drama_unknown_phase"]
     ground_truth_drama = results.get("ground_truth_drama", [])
@@ -133,16 +136,17 @@ def node_retrieve(state: dict) -> dict:
         format_section("AUDIENCE REACTION", reaction),
     ])
 
-    print(f"[retrieve] bios={len(bios)} drama={len(drama_general) + len(drama_episodes)} "
-          f"episode={len(this_episode)} reaction={len(reaction)} | phase resolved: {phase}")
+    logger.info("bios=%d drama=%d episode=%d reaction=%d | phase resolved: %s",
+                len(bios), len(drama_general) + len(drama_episodes), len(this_episode), len(reaction), phase)
 
     all_context_metas = bios + drama_general + drama_episodes + this_episode + reaction
     unique_sources_in_context = {}
     for m in all_context_metas:
         unique_sources_in_context.setdefault(m["source_url"], m["source_title"])
-    print(f"[retrieve] {len(unique_sources_in_context)} unique sources actually present in the context "
-          f"(compare this to the final SOURCES list, the gap is what the model chose NOT to cite):")
+    logger.debug("%d unique sources actually present in the context "
+                 "(compare this to the final SOURCES list, the gap is what the model chose NOT to cite):",
+                 len(unique_sources_in_context))
     for url, title in unique_sources_in_context.items():
-        print(f"    - {title}: {url}")
+        logger.debug("%s: %s", title, url)
 
     return {"context": context, "phase": phase}

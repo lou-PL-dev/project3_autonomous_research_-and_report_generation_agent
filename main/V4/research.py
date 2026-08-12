@@ -3,6 +3,7 @@ episode-range extraction from titles, temporal-fit scoring, and the
 per-category budgeted source ranking/selection.
 """
 
+import logging
 import os
 import re
 
@@ -19,7 +20,10 @@ from config import (
     MAX_CHARS_PER_SOURCE,
     MAX_PLAUSIBLE_EPISODE,
     NOISE_DOMAINS,
+    OPENAI_MINI_MODEL,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def is_general_domain(url: str) -> bool:
@@ -143,7 +147,7 @@ def node_plan_and_search(state: dict) -> dict:
         cast/bio content. Returns a short summary of what was found, including each
         result's extracted episode coverage so you can judge whether you need to
         search again with a different or more specific query."""
-        print(f"[plan] agent query: \"{query}\"")
+        logger.info('agent query: "%s"', query)
         response = tavily.search(query=query, search_depth="advanced", max_results=10, include_raw_content=True)
         summaries = []
         for item in response.get("results", []):
@@ -152,21 +156,21 @@ def node_plan_and_search(state: dict) -> dict:
             if not url:
                 continue
             if url in seen_urls:
-                print(f"    - SKIP (already seen): {title}")
+                logger.debug("SKIP (already seen): %s", title)
                 continue
             raw = item.get("raw_content") or item.get("content", "")
             if is_noise_domain(url):
-                print(f"    - SKIP (noise domain): {title}")
+                logger.debug("SKIP (noise domain): %s", title)
                 continue
             if not matches_edition(edition, title, raw):
-                print(f"    - SKIP (wrong edition): {title}")
+                logger.debug("SKIP (wrong edition): %s", title)
                 continue
             seen_urls.add(url)
             ep_start, ep_end = extract_episode_range_from_title(title)
             if ep_start is None:
                 ep_start, ep_end = match_by_episode_title(title, state["episode_titles"])
             ep_label = "general" if ep_start is None else (f"ep {ep_start}" if ep_start == ep_end else f"ep {ep_start}-{ep_end}")
-            print(f"    - KEPT ({ep_label}): {title}")
+            logger.debug("KEPT (%s): %s", ep_label, title)
             collected.append({
                 "title": title,
                 "url": url,
@@ -181,7 +185,7 @@ def node_plan_and_search(state: dict) -> dict:
             summaries.append(f"- {title} ({ep_label}, {len(raw)} chars)")
         return "\n".join(summaries) if summaries else "No new results for this query."
 
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    model = ChatOpenAI(model=OPENAI_MINI_MODEL, temperature=0)
     agent = create_react_agent(model, [search_show_content])
 
     episode_title_hint = ""
@@ -229,9 +233,9 @@ episode-only source for episode {episode} specifically."""
 
     result = agent.invoke({"messages": [("user", planning_prompt)]})
     tool_calls = sum(1 for m in result["messages"] if getattr(m, "tool_calls", None))
-    print(f"[plan] agent made {len(collected)} unique source discoveries across its search calls")
+    logger.info("agent made %d unique source discoveries across its search calls", len(collected))
     final_message = result["messages"][-1].content if result["messages"] else ""
-    print(f"[plan] agent's final summary: {final_message[:300]}")
+    logger.debug("agent's final summary: %s", final_message[:300])
 
     return {"raw_sources": collected}
 
@@ -286,13 +290,13 @@ def node_rank_and_select(state: dict) -> dict:
     ))
 
     web_selected = []
-    print(f"[rank] {len(excluded_future)} sources excluded, entirely past the cutoff")
-    print(f"[rank] {len(state['ground_truth_sources'])} ground-truth sources included unconditionally")
+    logger.info("%d sources excluded, entirely past the cutoff", len(excluded_future))
+    logger.info("%d ground-truth sources included unconditionally", len(state["ground_truth_sources"]))
     for category, budget in CATEGORY_BUDGETS.items():
         chosen = by_category[category][:budget]
-        print(f"[rank] {category}: selected {len(chosen)}/{len(by_category[category])} candidates (budget {budget})")
+        logger.info("%s: selected %d/%d candidates (budget %d)", category, len(chosen), len(by_category[category]), budget)
         for fit, s in chosen:
-            print(f"    - fit={fit:.2f} {s['title']}")
+            logger.debug("fit=%.2f %s", fit, s["title"])
         web_selected.extend(s for _, s in chosen)
 
     seen_urls = set()
@@ -303,6 +307,7 @@ def node_rank_and_select(state: dict) -> dict:
             deduped.append(s)
 
     selected = state["ground_truth_sources"] + deduped
-    print(f"[rank] total selected: {len(selected)} ({len(deduped)} web across 4 categories + {len(state['ground_truth_sources'])} ground truth)")
+    logger.info("total selected: %d (%d web across 4 categories + %d ground truth)",
+                len(selected), len(deduped), len(state["ground_truth_sources"]))
 
     return {"selected_sources": selected}

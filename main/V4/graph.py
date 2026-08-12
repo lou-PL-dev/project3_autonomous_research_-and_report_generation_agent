@@ -1,5 +1,6 @@
 """RecapState, graph assembly, and the run_pipeline entry point."""
 
+import logging
 import time
 from functools import wraps
 from typing import TypedDict
@@ -9,6 +10,7 @@ from langgraph.graph import END, StateGraph
 
 from generation import node_generate
 from indexing import node_index
+from logging_config import configure_logging
 from metadata import node_fetch_show_metadata
 from research import node_plan_and_search, node_rank_and_select
 from season_index import node_load_season_index
@@ -16,16 +18,18 @@ from spoiler_check import node_spoiler_check, route_after_spoiler_check
 from youtube import node_analyze_fan_reaction, node_fetch_youtube_comments
 from retrieval import node_retrieve
 
+logger = logging.getLogger(__name__)
+
 
 def timed(name: str, fn):
-    """Wrap a node function to print its wall-clock time, for locating the
+    """Wrap a node function to log its wall-clock time, for locating the
     remaining bottlenecks after parallelizing the I/O-bound nodes."""
     @wraps(fn)
     def wrapper(state):
         start = time.perf_counter()
         result = fn(state)
         elapsed = time.perf_counter() - start
-        print(f"[timing] {name}: {elapsed:.2f}s")
+        logger.info("[timing] %s: %.2fs", name, elapsed)
         return result
     return wrapper
 
@@ -80,6 +84,7 @@ def build_graph():
 
 def run_pipeline(edition: str, season: int, episode: int) -> dict:
     load_dotenv()
+    configure_logging()
     app = build_graph()
     initial_state = {
         "edition": edition, "season": season, "episode": episode, "phase": "unknown",

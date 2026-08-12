@@ -8,6 +8,11 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
 PINECONE_INDEX_NAME = "love-is-blind-recaps-v2"
 
+# Centralized so a model swap/cost experiment is a one-line change instead of
+# a grep-and-replace across every node module.
+OPENAI_CHAT_MODEL = "gpt-4o"        # generation, fan-reaction synthesis: quality-sensitive writing
+OPENAI_MINI_MODEL = "gpt-4o-mini"   # research planning, chunk tagging, spoiler audit: cheaper/faster tasks
+
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 MAX_CHARS_PER_SOURCE = 75000

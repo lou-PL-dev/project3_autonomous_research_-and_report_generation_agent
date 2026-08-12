@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import csv
+import logging
 import os
 
 from config import EPISODE_INDEX_DIR
@@ -21,6 +22,7 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+logger = logging.getLogger(__name__)
 
 
 def load_phase_from_season_index(edition: str, season: int, episode: int) -> str | None:
@@ -117,6 +119,7 @@ def get_recap():
         recap["phase"] = load_phase_from_season_index(edition, season, episode) or recap.get("phase")
         return jsonify(reshape_for_frontend(recap))
     except Exception as e:
+        logger.exception("recap generation failed for %s season %s episode %s", edition, season, episode)
         return jsonify({"error": str(e)}), 500
 
 
