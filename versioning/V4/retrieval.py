@@ -2,6 +2,8 @@
 reaction), phase-based drama filter (V1's proven design).
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re

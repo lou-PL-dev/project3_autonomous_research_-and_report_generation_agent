@@ -2,11 +2,14 @@
 comment-implied spoilers) and LLM synthesis into structured reaction data.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 import requests
 from openai import OpenAI
@@ -17,7 +20,7 @@ from cost_tracker import record_usage
 logger = logging.getLogger(__name__)
 
 
-def extract_youtube_video_id(url: str) -> str | None:
+def extract_youtube_video_id(url: str) -> Optional[str]:
     m = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", url)
     return m.group(1) if m else None
 

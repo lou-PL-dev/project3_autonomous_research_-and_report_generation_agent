@@ -2,8 +2,11 @@
 participant merge logic.
 """
 
+from __future__ import annotations
+
 import json
 import logging
+from typing import Optional
 
 from openai import OpenAI
 
@@ -124,7 +127,7 @@ nothing from it at all.
     current_ep_tmdb = state.get("tmdb_participants", {}).get(episode, [])
     participants = draft.setdefault("participants", [])
 
-    def find_match_index(tmdb_name: str) -> int | None:
+    def find_match_index(tmdb_name: str) -> Optional[int]:
         tmdb_lower = tmdb_name.lower()
         tmdb_tokens = set(tmdb_lower.split())
         for i, p in enumerate(participants):

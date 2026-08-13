@@ -3,9 +3,12 @@ episode-range extraction from titles, temporal-fit scoring, and the
 per-category budgeted source ranking/selection.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re
+from typing import Optional
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -58,7 +61,7 @@ def namespace_for(edition: str, season: int) -> str:
 # Deterministic episode-range extraction from titles (no LLM, free, run first)
 # ---------------------------------------------------------------------------
 
-def extract_episode_range_from_title(title: str) -> tuple[int | None, int | None]:
+def extract_episode_range_from_title(title: str) -> tuple[Optional[int], Optional[int]]:
     """Pull an episode range straight out of a title/URL string via regex.
     This is the core new idea: real recap titles almost always state their
     coverage explicitly ("Episode 6", "Episodes 6-9", "S1E6"), so this is free,
@@ -96,7 +99,7 @@ def extract_episode_range_from_title(title: str) -> tuple[int | None, int | None
     return (None, None)
 
 
-def match_by_episode_title(title: str, episode_titles: dict[int, str]) -> tuple[int | None, int | None]:
+def match_by_episode_title(title: str, episode_titles: dict[int, str]) -> tuple[Optional[int], Optional[int]]:
     """Fallback for sources that name an episode by its actual title rather than
     its number (common: "You Can Never Count on Men Recap" never says "episode 6").
     Only usable once OMDb metadata has been fetched. Requires the canonical title
@@ -111,7 +114,7 @@ def match_by_episode_title(title: str, episode_titles: dict[int, str]) -> tuple[
     return (None, None)
 
 
-def temporal_fit(ep_start: int | None, ep_end: int | None, cutoff: int) -> float:
+def temporal_fit(ep_start: Optional[int], ep_end: Optional[int], cutoff: int) -> float:
     """Score how well a source's episode coverage fits the user's cutoff.
     Returns -1.0 for sources that must be excluded entirely (they only cover
     episodes after the cutoff, pure spoiler risk with no safe content).

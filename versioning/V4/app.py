@@ -8,6 +8,8 @@ Usage:
     (serves on http://localhost:5004)
 """
 
+from __future__ import annotations
+
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -17,6 +19,7 @@ import os
 import threading
 import time
 import uuid
+from typing import Optional
 
 from config import EPISODE_INDEX_DIR
 from cost_tracker import BudgetExceededError
@@ -63,7 +66,7 @@ def _purge_old_jobs() -> None:
             del _jobs[job_id]
 
 
-def load_phase_from_season_index(edition: str, season: int, episode: int) -> str | None:
+def load_phase_from_season_index(edition: str, season: int, episode: int) -> Optional[str]:
     path = os.path.join(EPISODE_INDEX_DIR, f"{edition.lower()}_s{season}.csv")
     try:
         with open(path, newline="", encoding="utf-8") as f:

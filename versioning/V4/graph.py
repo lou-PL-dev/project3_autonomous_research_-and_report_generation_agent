@@ -1,9 +1,11 @@
 """RecapState, graph assembly, and the run_pipeline entry point."""
 
+from __future__ import annotations
+
 import logging
 import time
 from functools import wraps
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 from dotenv import load_dotenv
 from langgraph.graph import END, StateGraph
@@ -60,7 +62,7 @@ class RecapState(TypedDict):
     ground_truth_sources: list[dict]
     selected_sources: list[dict]
     youtube_comments: list[dict]
-    fan_reaction_analysis: dict | None
+    fan_reaction_analysis: Optional[dict]
     chunks: list[dict]
     context: str
     draft: dict

@@ -3,10 +3,13 @@ Establishes the canonical episode structure (title <-> number) BEFORE any messy
 web source gets asked "which episode is this?".
 """
 
+from __future__ import annotations
+
 import csv
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 import requests
 
@@ -14,10 +17,10 @@ from config import SEASON_INDEX_DIR
 
 logger = logging.getLogger(__name__)
 
-_imdb_ids_cache: dict[str, str] | None = None
+_imdb_ids_cache: Optional[dict[str, str]] = None
 
 
-def load_imdb_id(edition: str) -> str | None:
+def load_imdb_id(edition: str) -> Optional[str]:
     """Look up the hardcoded, verified IMDb series ID for an edition from
     season_indexes/imdb_ids.csv (one ID per edition, IMDb/OMDb use a single
     series ID covering ALL seasons of an edition, selected via a separate
@@ -34,10 +37,10 @@ def load_imdb_id(edition: str) -> str | None:
     return _imdb_ids_cache.get(edition.lower())
 
 
-_tmdb_ids_cache: dict[str, str] | None = None
+_tmdb_ids_cache: Optional[dict[str, str]] = None
 
 
-def load_tmdb_id(edition: str) -> str | None:
+def load_tmdb_id(edition: str) -> Optional[str]:
     """Look up the hardcoded, verified TMDB series ID for an edition from
     season_indexes/tmdb_ids.csv. Returns None if not added yet.
     """
