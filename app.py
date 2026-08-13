@@ -34,16 +34,16 @@ logger = logging.getLogger(__name__)
 # Friendly, in-voice labels for the UI's progress bar, keyed by graph.py's
 # NODE_ORDER so the two can't drift apart silently.
 STEP_LABELS = {
-    "fetch_show_metadata": "Digging up episode info...",
+    "fetch_show_metadata": "Digging up the episode...",
     "plan_and_search": "Snooping around the internet...",
-    "load_season_index": "Checking the receipts...",
+    "load_season_index": "Checking the plots...",
     "rank_and_select": "Sorting the tea...",
-    "fetch_youtube_comments": "Reading the comments...",
-    "index": "Organizing everything...",
+    "fetch_youtube_comments": "Reading the scandals...",
+    "index": "Organizing the gossips...",
     "retrieve": "Pulling the juiciest bits...",
-    "analyze_fan_reaction": "Feeling out the vibe...",
-    "generate": "Writing your recap...",
-    "spoiler_check": "Double-checking for spoilers...",
+    "analyze_fan_reaction": "Feeling out the drama...",
+    "generate": "Serving your recap...",
+    "spoiler_check": "Slaying all spoilers...",
 }
 
 # In-memory job store for the async recap flow: /api/recap/start kicks a

@@ -48,11 +48,34 @@ def node_retrieve(state: dict) -> dict:
     edition, season, episode = state["edition"], state["season"], state["episode"]
     namespace = namespace_for(edition, season)
     base_filter = {"edition": {"$eq": edition}, "season": {"$eq": season}}
-    general_filter = {**base_filter, "episode_start": {"$eq": -1}}
-    up_to_cutoff_filter = {**base_filter, "episode_start": {"$gte": 0}, "episode_end": {"$lte": episode}}
-    exact_episode_filter = {**base_filter, "episode_start": {"$lte": episode}, "episode_end": {"$gte": episode}}
 
     phase = resolve_phase(state["chunks"], episode)
+
+    # "After the Altar" web content routinely has no extractable episode number
+    # (real coverage doesn't refer to these by the season's episode count, see
+    # research.py), so it gets chunk-tagged with the right phase but
+    # episode_start/end = null -> -1. Two consequences, both handled below:
+    # (1) "general" (episode_start=-1) is supposed to mean "generic/timeless",
+    #     but a chunk phase-tagged to a *specific later phase* is not generic,
+    #     letting it through general_filter leaked future-phase content into
+    #     main_drama/reaction for EVERY episode's recap, not just 12-14, a real
+    #     spoiler bug independent of the highlights problem below. Excluded
+    #     here unless the current run's own target phase IS After the Altar.
+    # (2) the numeric exact_episode_filter can never match this content at all
+    #     (episode_end=-1 always fails ">= episode"), so highlights was starved
+    #     even when correctly phase-tagged content existed. Only for this one
+    #     phase, swap to a phase-based match instead of the numeric one; every
+    #     other phase keeps the existing numeric filter unchanged.
+    general_filter = {**base_filter, "episode_start": {"$eq": -1}}
+    if phase != "After the Altar":
+        general_filter["phase"] = {"$ne": "After the Altar"}
+
+    up_to_cutoff_filter = {**base_filter, "episode_start": {"$gte": 0}, "episode_end": {"$lte": episode}}
+    if phase == "After the Altar":
+        exact_episode_filter = {**base_filter, "phase": {"$eq": "After the Altar"}}
+    else:
+        exact_episode_filter = {**base_filter, "episode_start": {"$lte": episode}, "episode_end": {"$gte": episode}}
+
     # main_drama covers what happened BEFORE the current phase only, not including
     # it, highlights owns the current episode/phase specifically. If the current
     # phase is the season's first (Pods) or unresolved, there's no "before" yet.

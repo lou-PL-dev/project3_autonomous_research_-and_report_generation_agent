@@ -26,6 +26,7 @@ from config import (
     OPENAI_MINI_MODEL,
 )
 from cost_tracker import record_langchain_usage
+from season_index import load_season_index
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,25 @@ def matches_edition(edition: str, title: str, content: str) -> bool:
     else:
         has_edition = any(term in haystack for term in terms)
     return has_edition and has_franchise
+
+
+_SEASON_MENTION = re.compile(r"\bseason\s+(\d+)\b")
+
+
+def matches_season(season: int, title: str, content: str) -> bool:
+    """matches_edition() only guards edition/country, never season, so a
+    same-edition, WRONG-season source can still pass every existing check and
+    get its episode number matched onto the target season's cutoff purely by
+    coincidence: confirmed case, a "Love Is Blind Season 10 Episode 12 FINALE
+    Recap" YouTube video passed edition matching (still just "US") and its
+    title's "Episode 12" landed exactly on a Season 1 episode-12 run, pulling
+    an unrelated season's cast and comments into the recap. Reject only when a
+    DIFFERENT season number is explicitly stated; most single-season editions
+    never say "Season 1" at all, so no mention shouldn't be treated as a miss.
+    """
+    haystack = (title + " " + content[:1500]).lower()
+    mentioned = {int(m) for m in _SEASON_MENTION.findall(haystack)}
+    return not mentioned or season in mentioned
 
 
 def namespace_for(edition: str, season: int) -> str:
@@ -205,6 +225,9 @@ def node_plan_and_search(state: dict) -> dict:
             if not matches_edition(edition, title, raw):
                 logger.debug("SKIP (wrong edition): %s", title)
                 continue
+            if not matches_season(season, title, raw):
+                logger.debug("SKIP (wrong season): %s", title)
+                continue
             seen_urls.add(url)
             ep_start, ep_end = extract_episode_range_from_title(title)
             if ep_start is None:
@@ -233,6 +256,39 @@ def node_plan_and_search(state: dict) -> dict:
     if known_title:
         episode_title_hint = f'\nEpisode {episode}\'s real title is "{known_title}". Try at least one search using this exact title (not just the episode number), some sources name episodes by title without ever stating the number.'
 
+    # "After the Altar" episodes air long after the main season/reunion and real
+    # coverage almost never numbers them against the main season's episode count
+    # (press calls them "After the Altar", not "episode 12"). Searching by number
+    # for this phase reliably returns nothing useful, or worse, collides with an
+    # unrelated earlier episode that happens to share the "After the Altar"
+    # special's own internal part number. Check the hand-verified ground-truth
+    # phase for the target episode (cheap, no LLM) before deciding how to phrase
+    # the mandatory single-episode query.
+    ground_truth_rows = load_season_index(edition, season, episode)
+    target_phase = next(
+        (r["ground_truth_phase"] for r in ground_truth_rows if r["episode_start"] == episode), None
+    )
+
+    if target_phase == "After the Altar":
+        title_phrase = f' (real title: "{known_title}")' if known_title else ""
+        single_episode_point = f"""3. Specific events from episode {episode} itself{title_phrase}. This is an "After the
+   Altar" catch-up special, a separate episode airing much later than the main season and
+   reunion. Real coverage of these almost never refers to them by their season episode number,
+   do NOT search using "episode {episode}" for this point, that phrasing will return nothing
+   useful or the wrong episode entirely. Instead search using the real title above (if given)
+   and phrases like "Love is Blind {edition} After the Altar" recap/review. Run at least
+   one search using this phrasing."""
+    else:
+        single_episode_point = f"""3. Specific events from episode {episode} itself, and ONLY episode {episode}, not a range.
+   You MUST run at least one search using a query naming ONLY episode {episode} with no range
+   language at all (do not say "episodes X-Y"), for example "Love is Blind {edition} season
+   {season} episode {episode} only" or "Love is Blind {edition} season {season} episode
+   {episode} recap review". The word "only" helps exclude range-covering videos from the
+   results. This is required even if other searches already
+   found range-covering videos like "Episodes {episode}-9", those do not substitute for a
+   single-episode-only source, which is significantly more useful for precise, spoiler-safe
+   detail about this exact episode."""
+
     planning_prompt = f"""You are a research planner for a Love Is Blind recap tool.
 The user has watched Love Is Blind {edition} Season {season} up through episode {episode}.
 {episode_title_hint}
@@ -250,15 +306,7 @@ You need to gather enough evidence to write a recap covering four things:
    episode 1 pods" or "Love is Blind {edition} season {season} episodes 1-3 recap". Do not
    skip this even if other searches already turned up episode {episode}-adjacent content,
    early-episode content will not show up unless you search for it specifically.
-3. Specific events from episode {episode} itself, and ONLY episode {episode}, not a range.
-   You MUST run at least one search using a query naming ONLY episode {episode} with no range
-   language at all (do not say "episodes X-Y"), for example "Love is Blind {edition} season
-   {season} episode {episode} only" or "Love is Blind {edition} season {season} episode
-   {episode} recap review". The word "only" helps exclude range-covering videos from the
-   results. This is required even if other searches already
-   found range-covering videos like "Episodes {episode}-9", those do not substitute for a
-   single-episode-only source, which is significantly more useful for precise, spoiler-safe
-   detail about this exact episode.
+{single_episode_point}
 4. Audience/fan reaction to episode {episode}
 
 Call the search tool with different, specific queries to cover each of these needs, including

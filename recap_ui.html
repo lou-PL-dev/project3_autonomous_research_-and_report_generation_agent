@@ -149,6 +149,11 @@ const progressStepLabel = document.getElementById('progress-step-label');
 let LIBRARY = {}; // token (e.g. "poland") -> [season numbers], from /api/library
 let availableEditions = EDITIONS;
 let selectedEdition = null; // only set once the user picks a suggestion, not while typing
+// Tracks the furthest step reached so far in the current job. A failed
+// spoiler check sends the graph back to "generate" (an EARLIER step than
+// "spoiler_check"), which would otherwise make the bar visibly jump backward
+// on retry, only the label should change in that case, not the fill amount.
+let maxStepIndexSeen = 0;
 
 function populateSeasons(edition) {
   const token = (EDITION_SHORT_NAMES[edition] || edition).toLowerCase();
@@ -262,9 +267,15 @@ function renderRecap(data, episode) {
 }
 
 function updateProgress(stepIndex, totalSteps, stepLabel) {
-  const pct = totalSteps ? Math.min(100, Math.round((stepIndex / totalSteps) * 100)) : 0;
+  maxStepIndexSeen = Math.max(maxStepIndexSeen, stepIndex);
+  const pct = totalSteps ? Math.min(100, Math.round((maxStepIndexSeen / totalSteps) * 100)) : 0;
   progressBar.style.width = `${pct}%`;
   progressStepLabel.textContent = stepLabel || '';
+}
+
+function resetProgress() {
+  maxStepIndexSeen = 0;
+  updateProgress(0, 1, '');
 }
 
 // Polls /api/recap/status until the background job finishes, so the browser
@@ -280,8 +291,14 @@ async function pollJob(jobId) {
     if (!response.ok) {
       throw new Error(data.error || 'Lost track of that recap job.');
     }
+    if (data.status === 'done') {
+      // stepIndex only ever reaches the LAST node's index (totalSteps - 1),
+      // so the bar would otherwise cap out just short of 100% right as the
+      // content appears. Force it to completion here instead.
+      updateProgress(data.totalSteps, data.totalSteps, data.stepLabel);
+      return data.result;
+    }
     updateProgress(data.stepIndex, data.totalSteps, data.stepLabel);
-    if (data.status === 'done') return data.result;
     if (data.status === 'error') throw new Error(data.error || 'Something went wrong generating the recap.');
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
@@ -291,7 +308,7 @@ async function pollJob(jobId) {
 submitBtn.addEventListener('click', async () => {
   results.classList.add('hidden');
   errorMsg.classList.add('hidden');
-  updateProgress(0, 1, '');
+  resetProgress();
 
   if (!selectedEdition) {
     errorMsg.textContent = "Select a Love is Blind Edition or I won't find the drama!";
