@@ -1,4 +1,4 @@
-# Project Plan — Current State (V4)
+# Project Plan — Current State (V5.7)
 
 > This is the live project plan, current as of last version in root folder. The original Day-1 plan
 > (use case, initial stack reasoning, MVP scope, risk table as first drafted)
@@ -113,6 +113,19 @@ delivery, social sharing, interactive features (tagging, predictions/voting)
 — these are scoped into the future GTM sprints, see
 [`gtm_future_sprints.md`](../gtm_future_sprints.md), not the current MVP.
 
+**Changes since V4**:
+- Phase list's final entry renamed from "After the show" to "After the
+  Altar" (V5.3), freeing up "After the show" as a name for a real future
+  phase distinct from the wedding-day aftermath — see
+  [`gtm_future_sprints.md`](../gtm_future_sprints.md).
+- Node parallelization and caching extended twice more (V5.6, V5.7) beyond
+  the V4.2 pass, targeting rerun speed specifically (indexing cache so a
+  repeat run for the same edition/season/episode doesn't redo retrieval
+  work).
+- Docs/hygiene pass (V5): README, sample reports (4, across
+  Mexico/Poland/UK/US editions), and this planning doc brought in line
+  with the shipped state.
+
 ## 4. Risk Assessment
 
 Unchanged from the original plan (first drafted at
@@ -146,12 +159,16 @@ purely defensively around. Full detail in
 [`gtm_future_sprints.md`](../gtm_future_sprints.md).
 
 Also worth noting: the spoiler-boundary risk (row above, "spoiler boundary
-failing breaks the core value proposition") is not fully closed by the
-dedicated LangGraph spoiler-check node. Testing against Love Is Blind US
-Season 1 Episode 1 found the node passing a recap that used a
+failing breaks the core value proposition") was not fully closed by the
+dedicated LangGraph spoiler-check node as of V4. Testing against Love Is
+Blind US Season 1 Episode 1 found the node passing a recap that used a
 participant's married surname from the show's finale — a real leak via the
-name field, not the generated prose the node actually audits. Tracked as
-an open follow-up, not yet mitigated.
+name field, not the generated prose the node actually audits.
+
+**Status update, V5.3**: fixed. `spoiler_check.py` and `generation.py` now
+also audit the name field itself, not just prose, and the season-index
+cast data was corrected to stop seeding the married surname in the first
+place. Closed, not just mitigated.
 
 ## 5. Version history (delivered)
 
@@ -162,6 +179,13 @@ an open follow-up, not yet mitigated.
 | V2 | Prove more sources help | TMDB + YouTube comments added, Pinecone RAG with phase tagging |
 | V3 | Prove autonomous end-to-end run | Modular node structure, OMDb added, fan-reaction analysis, full README + architecture diagram |
 | V4 | Prove system is demo-ready and scalable | All editions/seasons (season-index ground truth replacing hardcoded show), cost tracker + budget guard, UI progress reporting, parallelized I/O nodes, logging |
+| V4.5 | Close the cost-visibility gap | Run-level cost tracker + live progress bar in the UI |
+| V5 | Submission/hygiene pass | README and docs brought current, project folder structure cleaned up |
+| V5.1 | Provide worked examples | 4 sample reports (Mexico, Poland, UK, US editions) checked in, sample paths fixed |
+| V5.2–V5.3 | Close the open spoiler-leak follow-up from V4 | "After the show" phase renamed to "After the Altar" (freeing the name for a future phase); married-surname leak fixed by auditing the name field directly, not just prose |
+| V5.4 | Firm up forward plan | "After the Altar"/future-phase distinction refined; GTM future-sprints doc expanded |
+| V5.5 | Tidy the spoiler-check path | Spoiler-check node and UI text cleanup |
+| V5.6–V5.7 | Prove rerun performance | Further node parallelization; indexing cache so a repeat run for the same edition/season/episode skips redundant retrieval work |
 
 ## 6. Success Metrics — status
 
@@ -169,9 +193,9 @@ Delivery/technical (from original plan, §6):
 - ✅ ReAct, LangGraph, RAG (Pinecone), 4 tool integrations, all present and functional.
 - ⚠️ n8n: deliberately not built — see stack_decision.md.
 - ✅ Cost tracking with hard budget cap per run.
-- ◻ 2–3 generated report examples across different inputs — see
-  [`samples/`](../samples), populated on an ongoing basis.
-- ◻ README reflecting current (V4) state — in progress.
+- ✅ 4 generated report examples across different inputs (Mexico, Poland,
+  UK, US editions) — see [`samples/`](../samples).
+- ✅ README reflecting current (V5.7) state.
 
 As-a-user metrics (spoiler leakage, tone, source list presence): validated
 manually during development per the original plan's method; no changes to

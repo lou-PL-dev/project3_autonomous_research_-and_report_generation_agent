@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Previously On: Love Is Blind</title>
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -21,10 +23,37 @@
   .submit-btn{margin-top:2px;background:linear-gradient(90deg,#946b17,#f5cf5a,#946b17);color:#2a0f4a;border:none;border-radius:10px;padding:13px;font-weight:700;font-size:15px;letter-spacing:.04em;cursor:pointer;width:100%}
   .submit-btn:hover{filter:brightness(1.06)}
   .submit-btn:disabled{opacity:.6;cursor:not-allowed}
-  .card{background:rgba(20,6,38,.5);border:1px solid rgba(245,212,148,.22);border-radius:18px;padding:28px 30px}
+  .card{background:rgba(20,6,38,.5);border:1px solid rgba(245,212,148,.22);border-radius:18px;padding:28px 30px;break-inside:avoid}
   .card h2{font-size:19px;margin:0 0 10px;color:#ffe066;letter-spacing:.03em}
   .card p{font-size:15px;line-height:1.7;color:rgba(224,218,232,.88);margin:0}
   .hidden{display:none!important}
+
+  /* "Save as PDF": a separate, plain-flow document built fresh from the
+     recap data each time the button is clicked (see buildPdfHTML in the
+     script), instead of trying to print the on-screen flex/card layout.
+     Plain block-level headings/paragraphs/lists paginate correctly in
+     every browser's print engine with no special handling - the on-screen
+     layout's flex containers, translucent card backgrounds, and fixed
+     widths were what kept breaking across the earlier attempts. This is
+     hidden outside of print, and everything else is hidden during print. */
+  #pdf-content { display: none; }
+  @media print {
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { size: A4; margin: 16mm; }
+    body > *:not(#pdf-content) { display: none !important; }
+    #pdf-content {
+      display: block;
+      background: #fff;
+      color: #2a0f4a;
+    }
+    #pdf-content .meta { font-size: 10px; font-weight: 600; letter-spacing: .1em; color: #c22d6b; text-transform: uppercase; margin: 0 0 6px; }
+    #pdf-content h1 { font-size: 18px; color: #c22d6b; margin: 0 0 10px; }
+    #pdf-content h2 { font-size: 12px; color: #c22d6b; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 4px; break-after: avoid; }
+    #pdf-content p, #pdf-content li { font-size: 10.5px; line-height: 1.45; color: #2a0f4a; margin: 0 0 4px; }
+    #pdf-content ul { margin: 0 0 4px; padding-left: 16px; }
+    #pdf-content a { font-size: 10px; color: #c22d6b; }
+    #pdf-content .conclusion { font-weight: 600; margin-top: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -104,13 +133,17 @@
 
     <p id="conclusion-text" style="font-size:15px;font-weight:600;color:rgba(224,218,232,.88);margin:0;text-align:center"></p>
 
-    <div style="background:rgba(20,6,38,.35);border:1px dashed rgba(245,212,148,.3);border-radius:14px;padding:20px 24px">
+    <div class="sources-box" style="background:rgba(20,6,38,.35);border:1px dashed rgba(245,212,148,.3);border-radius:14px;padding:20px 24px">
       <h3 style="font-size:13px;letter-spacing:.1em;margin:0 0 10px;color:rgba(255,214,10,.85);text-transform:uppercase">Sources</h3>
       <div id="sources-list" style="display:flex;flex-direction:column;gap:6px"></div>
     </div>
+
+    <button id="download-pdf-btn" class="submit-btn" style="max-width:280px;margin:4px auto 0">DOWNLOAD AS PDF</button>
   </div>
 
 </div>
+
+<div id="pdf-content"></div>
 
 <script>
 const API_BASE = 'http://localhost:5004';
@@ -145,6 +178,10 @@ const results = document.getElementById('results');
 const progressWrap = document.getElementById('progress-wrap');
 const progressBar = document.getElementById('progress-bar');
 const progressStepLabel = document.getElementById('progress-step-label');
+const downloadPdfBtn = document.getElementById('download-pdf-btn');
+
+let lastRecapMeta = null; // { edition, season, episode } for the current results, used to name the PDF
+let lastRecapData = null; // reshaped recap payload for the current results, used to build the PDF layout
 
 let LIBRARY = {}; // token (e.g. "poland") -> [season numbers], from /api/library
 let availableEditions = EDITIONS;
@@ -224,6 +261,7 @@ async function loadLibrary() {
 loadLibrary();
 
 function renderRecap(data, episode) {
+  lastRecapData = data;
   document.getElementById('phase-label').textContent = `PHASE: ${(data.phase || 'unknown').toUpperCase()}`;
   document.getElementById('intro-text').textContent = data.intro;
   document.getElementById('main-drama').textContent = data.mainDrama;
@@ -335,6 +373,7 @@ submitBtn.textContent = 'SPILLING THE TEA...';
       throw new Error(startData.error || 'Could not start the recap job.');
     }
     const data = await pollJob(startData.job_id);
+    lastRecapMeta = { edition: shortEdition, season, episode };
     renderRecap(data, episode);
   } catch (err) {
     errorMsg.textContent = `Something broke: ${err.message || 'Could not reach the recap server. Is app.py running?'}`;
@@ -345,6 +384,74 @@ submitBtn.textContent = 'SPILLING THE TEA...';
     submitBtn.disabled = false;
     submitBtn.textContent = 'SPILL THE TEA';
   }
+});
+
+// Builds a plain, print-friendly document (headings/paragraphs/lists, no
+// flex, no card boxes) into #pdf-content from the same recap data already
+// on screen. DOM methods + textContent throughout, not innerHTML, so
+// nothing in the recap text needs manual HTML-escaping.
+function buildPdfContent(data) {
+  const el = (tag, opts = {}) => {
+    const node = document.createElement(tag);
+    if (opts.text !== undefined) node.textContent = opts.text;
+    if (opts.className) node.className = opts.className;
+    return node;
+  };
+
+  const root = document.getElementById('pdf-content');
+  root.innerHTML = '';
+
+  root.appendChild(el('div', { className: 'meta', text: `Phase: ${(data.phase || 'unknown').toUpperCase()}` }));
+  root.appendChild(el('h1', { text: 'Previously On: Love Is Blind' }));
+  root.appendChild(el('p', { text: data.intro }));
+
+  root.appendChild(el('h2', { text: 'Main Drama So Far' }));
+  root.appendChild(el('p', { text: data.mainDrama }));
+
+  root.appendChild(el('h2', { text: `Highlights of the Last Episode (${data.episodeLabel})` }));
+  const highlightsUl = el('ul');
+  data.highlights.forEach(beat => highlightsUl.appendChild(el('li', { text: beat })));
+  root.appendChild(highlightsUl);
+
+  root.appendChild(el('h2', { text: 'Audience Reaction' }));
+  data.audienceReaction.split('\n').filter(line => line.trim()).forEach(line => {
+    root.appendChild(el('p', { text: line }));
+  });
+
+  root.appendChild(el('h2', { text: 'Participants' }));
+  const participantsUl = el('ul');
+  data.participants.forEach(person => {
+    participantsUl.appendChild(el('li', { text: `${person.name} (${person.age}, ${person.occupation})` }));
+  });
+  root.appendChild(participantsUl);
+
+  root.appendChild(el('p', { className: 'conclusion', text: data.conclusion }));
+
+  root.appendChild(el('h2', { text: 'Sources' }));
+  data.sources.forEach(src => {
+    const a = el('a', { text: src.title });
+    a.href = src.url;
+    const p = el('p');
+    p.appendChild(a);
+    root.appendChild(p);
+  });
+}
+
+// Uses the browser's native print pipeline (real CSS rendering) rather than
+// a canvas screenshot, on a plain block-flow document built fresh from the
+// data each time - see buildPdfContent above and the #pdf-content rules in
+// <style> for why. The document title becomes the suggested filename in
+// the browser's "Save as PDF" dialog.
+downloadPdfBtn.addEventListener('click', () => {
+  if (!lastRecapData) return;
+  const meta = lastRecapMeta || { edition: 'recap', season: '', episode: '' };
+  const prevTitle = document.title;
+  document.title = `previously-on-${meta.edition}-s${meta.season}e${meta.episode}`.toLowerCase().replace(/\s+/g, '-');
+
+  buildPdfContent(lastRecapData);
+  window.print();
+
+  document.title = prevTitle;
 });
 </script>
 
