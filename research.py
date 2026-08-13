@@ -5,9 +5,11 @@ per-category budgeted source ranking/selection.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 from langchain_core.tools import tool
@@ -24,6 +26,8 @@ from config import (
     MAX_PLAUSIBLE_EPISODE,
     NOISE_DOMAINS,
     OPENAI_MINI_MODEL,
+    SEARCH_CACHE_DIR,
+    SEARCH_CACHE_TTL_SECONDS,
 )
 from cost_tracker import record_langchain_usage
 from season_index import load_season_index
@@ -114,6 +118,45 @@ def namespace_for(edition: str, season: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# plan_and_search result cache: keyed per (edition, season, episode), so a
+# cache hit is an exact replay of a previous identical request. Deliberately
+# NOT keyed at the (edition, season) level: node_plan_and_search runs a
+# mandatory query targeting the specific episode cutoff (the "episode N
+# only" search), reusing a different episode's results here would silently
+# starve the highlights category for whichever episode wasn't actually
+# searched for.
+# ---------------------------------------------------------------------------
+
+def _search_cache_path(edition: str, season: int, episode: int) -> str:
+    fname = f"{edition.lower().replace(' ', '_')}_s{season}_e{episode}.json"
+    return os.path.join(SEARCH_CACHE_DIR, fname)
+
+
+def _load_cached_search(edition: str, season: int, episode: int) -> Optional[list[dict]]:
+    path = _search_cache_path(edition, season, episode)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            entry = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if time.time() - entry.get("cached_at", 0) > SEARCH_CACHE_TTL_SECONDS:
+        return None
+    return entry.get("raw_sources")
+
+
+def _save_search_cache(edition: str, season: int, episode: int, raw_sources: list[dict]) -> None:
+    os.makedirs(SEARCH_CACHE_DIR, exist_ok=True)
+    path = _search_cache_path(edition, season, episode)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"cached_at": time.time(), "raw_sources": raw_sources}, f)
+    except OSError as e:
+        logger.warning("failed to write search cache for %s season %d episode %d: %s", edition, season, episode, e)
+
+
+# ---------------------------------------------------------------------------
 # Deterministic episode-range extraction from titles (no LLM, free, run first)
 # ---------------------------------------------------------------------------
 
@@ -195,6 +238,13 @@ def temporal_fit(ep_start: Optional[int], ep_end: Optional[int], cutoff: int) ->
 
 def node_plan_and_search(state: dict) -> dict:
     edition, season, episode = state["edition"], state["season"], state["episode"]
+
+    cached = _load_cached_search(edition, season, episode)
+    if cached is not None:
+        logger.info("search cache hit for %s season %d episode %d (%d sources), skipping ReAct search",
+                    edition, season, episode, len(cached))
+        return {"raw_sources": cached}
+
     tavily = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
     collected: list[dict] = []
     seen_urls = set()
@@ -326,6 +376,7 @@ episode-only source for episode {episode} specifically."""
     final_message = result["messages"][-1].content if result["messages"] else ""
     logger.debug("agent's final summary: %s", final_message[:300])
 
+    _save_search_cache(edition, season, episode, collected)
     return {"raw_sources": collected}
 
 

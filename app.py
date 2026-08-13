@@ -41,9 +41,9 @@ STEP_LABELS = {
     "fetch_youtube_comments": "Reading the scandals...",
     "index": "Organizing the gossips...",
     "retrieve": "Pulling the juiciest bits...",
-    "analyze_fan_reaction": "Feeling out the drama...",
-    "generate": "Serving your recap...",
-    "spoiler_check": "Slaying all spoilers...",
+    "analyze_fan_reaction": "Feeling out the vibe...",
+    "generate": "Serving the drama...",
+    "spoiler_check": "Killing all spoilers...",
 }
 
 # In-memory job store for the async recap flow: /api/recap/start kicks a

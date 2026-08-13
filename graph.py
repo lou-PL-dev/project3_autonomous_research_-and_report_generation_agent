@@ -44,7 +44,10 @@ def timed(name: str, fn, on_step=None):
 
 # Single source of truth for node order, shared with app.py so the job-status
 # endpoint's progress fraction (step_index / len(NODE_ORDER)) can't drift out
-# of sync with the actual graph.
+# of sync with the actual graph. fetch_youtube_comments and index/retrieve run
+# as parallel branches (see build_graph), so their relative firing order isn't
+# guaranteed, this list is only used to compute a progress index, not to imply
+# strict sequencing.
 NODE_ORDER = [
     "fetch_show_metadata", "plan_and_search", "load_season_index", "rank_and_select",
     "fetch_youtube_comments", "index", "retrieve", "analyze_fan_reaction", "generate", "spoiler_check",
@@ -80,7 +83,13 @@ def build_graph(on_step=None):
     graph.add_node("fetch_youtube_comments", timed("fetch_youtube_comments", node_fetch_youtube_comments, on_step))
     graph.add_node("index", timed("index", node_index, on_step))
     graph.add_node("retrieve", timed("retrieve", node_retrieve, on_step))
-    graph.add_node("analyze_fan_reaction", timed("analyze_fan_reaction", node_analyze_fan_reaction, on_step))
+    # defer=True: this node has two incoming branches of unequal length
+    # (fetch_youtube_comments is 1 hop from rank_and_select, index->retrieve
+    # is 2), so without deferring, LangGraph fires it as soon as the FIRST
+    # branch's result lands rather than waiting for both, running it (and
+    # everything downstream) twice. defer forces a real barrier: wait for
+    # every upstream path that can still reach this node before running it.
+    graph.add_node("analyze_fan_reaction", timed("analyze_fan_reaction", node_analyze_fan_reaction, on_step), defer=True)
     graph.add_node("generate", timed("generate", node_generate, on_step))
     graph.add_node("spoiler_check", timed("spoiler_check", node_spoiler_check, on_step))
 
@@ -88,9 +97,16 @@ def build_graph(on_step=None):
     graph.add_edge("fetch_show_metadata", "plan_and_search")
     graph.add_edge("plan_and_search", "load_season_index")
     graph.add_edge("load_season_index", "rank_and_select")
+    # fetch_youtube_comments and index->retrieve both depend only on
+    # selected_sources, not on each other's output, so they fan out from
+    # rank_and_select and run concurrently, joining at analyze_fan_reaction
+    # (the first node that needs both youtube_comments and context). index is
+    # the much longer chain (LLM tagging + embeddings + Pinecone), so this
+    # hides the youtube fetch's wall-clock almost entirely behind it.
     graph.add_edge("rank_and_select", "fetch_youtube_comments")
-    graph.add_edge("fetch_youtube_comments", "index")
+    graph.add_edge("rank_and_select", "index")
     graph.add_edge("index", "retrieve")
+    graph.add_edge("fetch_youtube_comments", "analyze_fan_reaction")
     graph.add_edge("retrieve", "analyze_fan_reaction")
     graph.add_edge("analyze_fan_reaction", "generate")
     graph.add_edge("generate", "spoiler_check")

@@ -57,3 +57,12 @@ MAX_PLAUSIBLE_EPISODE = 20  # reality show seasons don't run this long; guards a
 SEASON_INDEX_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_indexes")
 EPISODE_INDEX_DIR = os.path.join(SEASON_INDEX_DIR, "episodes")
 CAST_INDEX_DIR = os.path.join(SEASON_INDEX_DIR, "cast")
+
+# Cache for plan_and_search's Tavily/ReAct results, keyed per (edition, season,
+# episode) so a cache hit is an exact replay of a previous identical request,
+# never a stand-in for a different episode's mandatory single-episode query.
+# One week: this product doesn't cover in-progress/currently-airing seasons,
+# so new coverage of an already-cached edition/season/episode combo isn't
+# expected to appear day-to-day.
+SEARCH_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".search_cache")
+SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
