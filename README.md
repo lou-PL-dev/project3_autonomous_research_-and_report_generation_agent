@@ -122,6 +122,15 @@ re-running it. Deliberately keyed per-episode rather than per-season: the
 node runs a mandatory query targeting the specific episode cutoff, reusing
 another episode's cached results would silently miss that coverage.
 
+`index`'s per-chunk LLM tagging and embedding calls are also cached to disk
+(`.index_cache/`, gitignored), keyed by a hash of `(model, chunk text)` —
+content-addressed, not run- or episode-scoped, so a source re-selected for a
+different episode of the same season (e.g. a "meet the cast" article) still
+hits the cache. A hit replays a real prior tag/embedding for that exact
+text, it changes nothing about what gets written to Pinecone or how the
+namespace is cleared and rebuilt each run — only the redundant OpenAI calls
+before that write are skipped.
+
 ## Tools / APIs (4, exceeds the ≥3 requirement)
 
 | Tool | Used for |

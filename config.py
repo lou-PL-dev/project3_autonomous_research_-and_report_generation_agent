@@ -66,3 +66,13 @@ CAST_INDEX_DIR = os.path.join(SEASON_INDEX_DIR, "cast")
 # expected to appear day-to-day.
 SEARCH_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".search_cache")
 SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
+
+# Content-addressed cache for indexing's per-chunk LLM tagging and embedding
+# calls (indexing.py), keyed by a hash of (model, chunk text), so identical
+# chunk text always maps to the same cache entry regardless of which run or
+# episode it came from. No TTL: the key already changes if the text or model
+# changes, so a hit is always a byte-for-byte replay of a real prior result,
+# never a staleness risk. This does NOT change what gets written to Pinecone
+# or how the namespace is rebuilt, it only skips redundant OpenAI calls for
+# chunk text already seen before.
+INDEX_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".index_cache")

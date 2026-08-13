@@ -2,11 +2,13 @@
 and phase resolution from indexed chunks.
 """
 
+import hashlib
 import json
 import logging
 import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
@@ -16,6 +18,7 @@ from config import (
     CHUNK_SIZE,
     EMBEDDING_DIM,
     EMBEDDING_MODEL,
+    INDEX_CACHE_DIR,
     OPENAI_MINI_MODEL,
     PHASES,
     PINECONE_INDEX_NAME,
@@ -26,6 +29,38 @@ from cost_tracker import record_usage
 from research import namespace_for
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Content-addressed cache for per-chunk tagging/embedding, see config.py's
+# INDEX_CACHE_DIR docstring: a hit is a replay of a real prior result for the
+# exact same (model, text) pair, this changes nothing about what ends up in
+# Pinecone, it only skips a redundant OpenAI call.
+# ---------------------------------------------------------------------------
+
+def _content_hash(model: str, text: str) -> str:
+    return hashlib.sha256(f"{model}\n{text}".encode("utf-8")).hexdigest()
+
+
+def _cache_get(subdir: str, key: str):
+    path = os.path.join(INDEX_CACHE_DIR, subdir, f"{key}.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _cache_put(subdir: str, key: str, value) -> None:
+    path = os.path.join(INDEX_CACHE_DIR, subdir, f"{key}.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(value, f)
+    except OSError as e:
+        logger.warning("failed to write index cache entry (%s): %s", subdir, e)
 
 
 def split_into_chunks(text: str) -> list[str]:
@@ -143,19 +178,37 @@ def node_index(state: dict) -> dict:
                 "source_title": source["title"], "text": chunks[chunk_idx],
             })
 
+    # Content-addressed cache check first: a chunk whose exact text was tagged
+    # before (same run repeated, or the same source re-selected for a
+    # different episode of this season) reuses that real prior tag instead of
+    # re-asking the LLM, this is pure memoization, not an approximation.
+    tags_by_id: dict[tuple[int, int], dict] = {}
+    to_tag = []
+    for item in tag_queue:
+        cache_key = _content_hash(OPENAI_MINI_MODEL, item["text"])
+        cached_tag = _cache_get("tags", cache_key)
+        if cached_tag is not None:
+            tags_by_id[(item["source_index"], item["chunk_index"])] = cached_tag
+        else:
+            item["_cache_key"] = cache_key
+            to_tag.append(item)
+
     # Tagging batches are independent LLM calls, run them concurrently instead
     # of one at a time.
-    batches = [tag_queue[i:i + TAG_BATCH_SIZE] for i in range(0, len(tag_queue), TAG_BATCH_SIZE)]
-    tags_by_id: dict[tuple[int, int], dict] = {}
+    batches = [to_tag[i:i + TAG_BATCH_SIZE] for i in range(0, len(to_tag), TAG_BATCH_SIZE)]
     if batches:
         # No artificial worker cap here: these are independent LLM calls and
         # capping at 8 meant 12 batches ran in two sequential waves instead of
         # one, which was the single biggest cost in this node (~27s of it).
         with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-            for batch_tags in pool.map(lambda b: tag_chunks_batch(client, b), batches):
+            for batch_items, batch_tags in zip(batches, pool.map(lambda b: tag_chunks_batch(client, b), batches)):
                 tags_by_id.update(batch_tags)
-    logger.info("tagged %d/%d chunks across %d selected sources (source-first: not the full fetch pool)",
-                len(tags_by_id), len(tag_queue), len(state["selected_sources"]))
+                for item in batch_items:
+                    tag = batch_tags.get((item["source_index"], item["chunk_index"]))
+                    if tag is not None:
+                        _cache_put("tags", item["_cache_key"], tag)
+    logger.info("tagged %d/%d chunks across %d selected sources (%d from cache, %d via LLM; source-first: not the full fetch pool)",
+                len(tags_by_id), len(tag_queue), len(state["selected_sources"]), len(tag_queue) - len(to_tag), len(to_tag))
 
     # Embed everything in one (or a few capped-size) call(s) instead of one
     # embeddings.create round trip per source, this was the single biggest
@@ -167,23 +220,40 @@ def node_index(state: dict) -> dict:
             flat_chunks.append(source_chunks[source_idx][chunk_idx])
             flat_positions.append((source_idx, chunk_idx))
 
+    # Same content-addressed cache approach as tagging above: an embedding is
+    # a pure function of (model, text), a hit replays a real prior vector.
+    embeddings_by_position: dict[tuple[int, int], list[float]] = {}
+    to_embed_positions: list[tuple[int, int]] = []
+    to_embed_texts: list[str] = []
+    for pos, text in zip(flat_positions, flat_chunks):
+        cached_embedding = _cache_get("embeddings", _content_hash(EMBEDDING_MODEL, text))
+        if cached_embedding is not None:
+            embeddings_by_position[pos] = cached_embedding
+        else:
+            to_embed_positions.append(pos)
+            to_embed_texts.append(text)
+
     EMBED_BATCH_SIZE = 200  # stay well under the embeddings endpoint's per-request item/token limits
     embed_batches = [
-        (flat_positions[i:i + EMBED_BATCH_SIZE], flat_chunks[i:i + EMBED_BATCH_SIZE])
-        for i in range(0, len(flat_chunks), EMBED_BATCH_SIZE)
+        (to_embed_positions[i:i + EMBED_BATCH_SIZE], to_embed_texts[i:i + EMBED_BATCH_SIZE])
+        for i in range(0, len(to_embed_texts), EMBED_BATCH_SIZE)
     ]
 
     def embed_batch(batch):
         positions, texts = batch
         response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
         record_usage(EMBEDDING_MODEL, response.usage)
-        return list(zip(positions, (item.embedding for item in response.data)))
+        embeddings = [item.embedding for item in response.data]
+        for text, embedding in zip(texts, embeddings):
+            _cache_put("embeddings", _content_hash(EMBEDDING_MODEL, text), embedding)
+        return list(zip(positions, embeddings))
 
-    embeddings_by_position: dict[tuple[int, int], list[float]] = {}
     if embed_batches:
         with ThreadPoolExecutor(max_workers=len(embed_batches)) as pool:
             for pairs in pool.map(embed_batch, embed_batches):
                 embeddings_by_position.update(pairs)
+    logger.info("embedded %d chunks (%d from cache, %d via API)",
+                len(flat_chunks), len(flat_chunks) - len(to_embed_texts), len(to_embed_texts))
 
     all_chunks = []
     vectors_to_upsert = []
