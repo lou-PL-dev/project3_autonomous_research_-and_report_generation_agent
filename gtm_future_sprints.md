@@ -134,6 +134,32 @@ current phase logic, given how much of the existing architecture (cutoff
 filtering, spoiler-check, phase-based retrieval) simply doesn't apply to
 it.
 
+## Product roadmap: Reddit API as a fan-reaction source
+
+Not built in the MVP for a documented reason (see
+[`versioning/MVP/planning.md`](versioning/MVP/planning.md) §2): official
+Reddit API access requires manual approval (2–4 week wait), and non-commercial
+self-serve registration was closed as of 2025 — too fragile for a 5-day
+build, so YouTube comments served as the fan-reaction source instead.
+
+Worth revisiting once Sprint 1 is underway, for two reasons:
+
+- **Better raw material than YouTube comments.** Subreddit discussion
+  threads (r/LoveIsBlindOnNetflix and edition-specific ones) tend to be
+  more detailed and less repetitive than YouTube comment sections —
+  closer to real discourse than drive-by reactions, which should improve
+  the quality of the `audience_reaction` section specifically.
+- **Sprint 1 removes the biggest blocker to it.** Once there's a real,
+  organic presence in these communities (the whole point of Sprint 1),
+  applying for API access as an established participant rather than a
+  cold, unknown request is both a more honest use of the access and
+  plausibly a faster approval path.
+
+Scope if picked up: an additional source alongside YouTube in the existing
+`fetch_youtube_comments`/`analyze_fan_reaction` step (same range-gating
+requirement applies — nothing from a subreddit thread discussing an
+episode beyond the user's cutoff), not a replacement for it.
+
 ---
 
 ## Business model

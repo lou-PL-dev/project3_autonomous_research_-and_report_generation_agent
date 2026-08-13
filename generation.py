@@ -145,15 +145,20 @@ nothing from it at all.
 
     def find_match_index(tmdb_name: str) -> Optional[int]:
         tmdb_lower = tmdb_name.lower()
-        tmdb_tokens = set(tmdb_lower.split())
+        tmdb_tokens = tmdb_lower.split()
         for i, p in enumerate(participants):
             existing = p["name"].lower()
             if tmdb_lower in existing or existing in tmdb_lower:
                 return i
-            # First-name-token overlap catches nickname cases (e.g. "Kamil
-            # Uno" vs TMDB's "Kamil Michał Osiak"), approximate but safer
-            # than missing an obvious same-person match entirely.
-            if tmdb_tokens & set(existing.split()):
+            # First-NAME match only (index 0, not any shared token): catches
+            # nickname/middle-name cases (e.g. "Kamil Uno" vs TMDB's "Kamil
+            # Michał Osiak") without also matching on a shared SURNAME, which
+            # incorrectly cross-attributed two different people who happen to
+            # share a last name (confirmed case: TMDB's "Cameron Hamilton"
+            # matching onto "Lauren Speed Hamilton" via the "Hamilton" token,
+            # a married couple, overwriting her age/profession with his).
+            existing_tokens = existing.split()
+            if tmdb_tokens and existing_tokens and tmdb_tokens[0] == existing_tokens[0]:
                 return i
         return None
 
@@ -202,6 +207,22 @@ nothing from it at all.
                 "profession": info.get("profession"),
                 "is_host": is_host,
             })
+
+    # Final dedup pass: the model's own draft (before this merge ever ran) can
+    # independently name the same person twice under different spellings
+    # pulled from different context sections (e.g. ground-truth bios say
+    # "Lauren Speed", other sources say "Lauren Speed Hamilton") — the merge
+    # loop above only reconciles TMDB names against existing entries, it
+    # doesn't catch two pre-existing draft entries that were already
+    # duplicates of each other going in. Keep the longer (more complete) name
+    # whenever one is a substring of the other.
+    deduped: list = []
+    for p in sorted(participants, key=lambda p: -len(p["name"])):
+        p_lower = p["name"].lower()
+        if any(p_lower in kept["name"].lower() for kept in deduped):
+            continue
+        deduped.append(p)
+    draft["participants"] = deduped
 
     logger.info("generate attempt %d", state.get("attempts", 0) + 1)
     return {"draft": draft, "attempts": state.get("attempts", 0) + 1}

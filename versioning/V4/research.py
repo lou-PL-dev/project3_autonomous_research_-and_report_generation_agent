@@ -38,6 +38,38 @@ def is_noise_domain(url: str) -> bool:
     return any(d in url for d in NOISE_DOMAINS)
 
 
+# Generic words real recap headlines commonly put right after "Love Is
+# Blind" that are NOT an edition qualifier (season/episode markers, review
+# vocabulary, etc.) — used only for the "US" edition special-case below.
+_NON_EDITION_TITLE_CONTINUATIONS = {
+    "season", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10",
+    "episode", "episodes", "ep", "eps", "recap", "recaps", "review", "reviews",
+    "reviewed", "cast", "moments", "breakdown", "guide", "ranked", "ranking",
+    "most", "every", "the", "a", "an", "vs", "and", "or",
+}
+
+
+def _title_names_other_edition(title_lower: str) -> bool:
+    """For the "US" edition specifically: it's the flagship, always just called
+    plain "Love Is Blind" with no qualifier, unlike every other edition, which is
+    explicitly titled ("Love Is Blind: Poland", "Love Is Blind UK", ...). Matching
+    "us" as a raw substring is unreliable, it's also the most common English
+    pronoun, so it turns up incidentally in nearly any review's prose (confirmed
+    real failure: a parody "Love Is Blind Ohio" review passed the old check only
+    because "us" appeared somewhere else in its body text). Instead, treat US as
+    the default and only reject when the title clearly names something else: the
+    word right after "Love Is Blind" isn't "us"/"usa" and isn't one of the
+    generic words real recap headlines use (season, episode, recap, ...).
+    """
+    match = re.search(r"\blove\s+is\s+blind\b[:\-]?\s*([a-z0-9]+)?", title_lower)
+    if not match:
+        return False
+    next_word = match.group(1)
+    if not next_word or next_word in ("us", "usa", "u") or next_word.isdigit():
+        return False
+    return next_word not in _NON_EDITION_TITLE_CONTINUATIONS
+
+
 def matches_edition(edition: str, title: str, content: str) -> bool:
     """Requires BOTH the franchise name and the edition/country name. Edition names
     like "Poland", "France", "Germany" are also just country names, matching on
@@ -46,10 +78,14 @@ def matches_edition(edition: str, title: str, content: str) -> bool:
     (Poland)" passed the old edition-only check and landed in highlights with a
     perfect temporal-fit score).
     """
-    terms = [edition.lower()] + EDITION_ALIASES.get(edition.lower(), [])
+    edition_lower = edition.lower()
+    terms = [edition_lower] + EDITION_ALIASES.get(edition_lower, [])
     haystack = (title + " " + content[:1500]).lower()
-    has_edition = any(term in haystack for term in terms)
     has_franchise = any(term in haystack for term in FRANCHISE_TERMS)
+    if edition_lower == "us":
+        has_edition = not _title_names_other_edition(title.lower())
+    else:
+        has_edition = any(term in haystack for term in terms)
     return has_edition and has_franchise
 
 
