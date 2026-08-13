@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Previously On: Love Is Blind</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body{margin:0}
+  *{font-family:'Oswald',sans-serif;box-sizing:border-box}
+  a{color:#ffd60a}
+  a:hover{color:#ffe680}
+  .gold-text{background:linear-gradient(100deg,#7a5310 0%,#c8901a 15%,#f5cf5a 30%,#fff8dd 42%,#f5cf5a 54%,#caa53a 70%,#946b17 85%,#c8901a 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 2px 1px rgba(0,0,0,.35))}
+  select,input[type=number]{appearance:none}
+  .pod-outer{border-radius:20px;box-shadow:0 0 6px rgba(255,214,10,.28),0 0 14px rgba(232,180,0,.15)}
+  .pod-inner{border-radius:18px}
+  .field-label{font-size:13px;font-weight:600;letter-spacing:.06em;color:#ffd60a;text-transform:uppercase}
+  .field-input{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:11px 12px;color:#fff;font-size:15px;width:100%}
+  .field-input:focus{outline:2px solid #ffd60a;outline-offset:1px}
+  .submit-btn{margin-top:2px;background:linear-gradient(90deg,#946b17,#f5cf5a,#946b17);color:#2a0f4a;border:none;border-radius:10px;padding:13px;font-weight:700;font-size:15px;letter-spacing:.04em;cursor:pointer;width:100%}
+  .submit-btn:hover{filter:brightness(1.06)}
+  .submit-btn:disabled{opacity:.6;cursor:not-allowed}
+  .card{background:rgba(20,6,38,.5);border:1px solid rgba(245,212,148,.22);border-radius:18px;padding:28px 30px}
+  .card h2{font-size:19px;margin:0 0 10px;color:#ffe066;letter-spacing:.03em}
+  .card p{font-size:15px;line-height:1.7;color:rgba(224,218,232,.88);margin:0}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<div style="min-height:100vh;width:100%;background:radial-gradient(circle at 20% 0%, #7b2ea8 0%, transparent 55%), linear-gradient(155deg,#2a0f4a 0%,#5b1a86 32%,#9a2a8f 62%,#c22d6b 100%);color:#f3e9ff;display:flex;flex-direction:column;align-items:center;padding:28px 24px 40px">
+
+  <div style="text-align:center;max-width:720px;margin-bottom:20px">
+    <div style="font-size:31px;font-weight:600;letter-spacing:.24em;color:rgba(255,255,255,.85);margin-bottom:8px">PREVIOUSLY ON</div>
+    <h1 class="gold-text" style="font-size:58px;font-weight:700;letter-spacing:.02em;margin:0;line-height:1.05">LOVE IS BLIND</h1>
+    <p style="font-size:18px;font-weight:600;color:rgba(255,255,255,.92);margin:10px 0 0;line-height:1.5">YOUR RECAP BESTIE. SPOILER-FREE, ALWAYS.</p>
+  </div>
+
+  <div class="pod-outer" style="width:100%;max-width:560px;padding:3px;background:linear-gradient(135deg,#e8b400,#946b17)">
+    <div class="pod-inner" style="background:#1c0a34;padding:24px 28px">
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <div style="display:flex;flex-direction:column;gap:6px;position:relative">
+          <label class="field-label" for="lib-edition">Edition</label>
+          <input id="lib-edition" class="field-input" type="text" autocomplete="off" placeholder="Type to search editions...">
+          <div id="edition-suggestions" class="hidden" style="position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#1c0a34;border:1px solid rgba(255,255,255,.25);border-radius:10px;max-height:220px;overflow-y:auto;z-index:10"></div>
+        </div>
+
+        <div style="display:flex;gap:14px">
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <label class="field-label" for="lib-season">Season</label>
+            <select id="lib-season" class="field-input"></select>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <label class="field-label" for="lib-episode">Last Episode Watched</label>
+            <input id="lib-episode" class="field-input" type="number" min="1" max="12" placeholder="#">
+          </div>
+        </div>
+
+        <button id="submit-btn" class="submit-btn">SPILL THE TEA</button>
+      </div>
+    </div>
+  </div>
+
+  <p id="loading-msg" class="hidden" style="margin-top:24px;font-size:14px;color:rgba(255,255,255,.75);text-align:center">Hold on, I'm getting into everyone's business rn...</p>
+  <div id="progress-wrap" class="hidden" style="margin-top:14px;width:100%;max-width:420px;display:flex;flex-direction:column;gap:8px">
+    <div style="height:8px;border-radius:999px;background:rgba(255,255,255,.15);overflow:hidden">
+      <div id="progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#946b17,#f5cf5a);border-radius:999px;transition:width .5s ease"></div>
+    </div>
+    <p id="progress-step-label" style="margin:0;font-size:13px;color:rgba(255,255,255,.7);text-align:center;min-height:16px"></p>
+  </div>
+  <p id="error-msg" class="hidden" style="margin-top:24px;font-size:14px;color:#ff8080;text-align:center;max-width:480px"></p>
+
+  <div id="results" class="hidden" style="width:100%;max-width:720px;margin-top:48px;flex-direction:column;gap:24px">
+
+    <div style="display:flex;align-items:center;gap:14px;justify-content:center">
+      <span style="height:1px;flex:1;background:rgba(255,255,255,.2)"></span>
+      <span id="phase-label" style="font-size:13px;font-weight:600;letter-spacing:.18em;color:#ffd60a;white-space:nowrap"></span>
+      <span style="height:1px;flex:1;background:rgba(255,255,255,.2)"></span>
+    </div>
+
+    <p id="intro-text" style="font-size:17px;font-weight:600;color:rgba(224,218,232,.9);margin:0;text-align:center"></p>
+
+    <div class="card">
+      <h2>MAIN DRAMA SO FAR</h2>
+      <p id="main-drama" style="white-space:pre-line"></p>
+    </div>
+
+    <div class="card">
+      <h2 id="highlights-header"></h2>
+      <div id="highlights-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>AUDIENCE REACTION</h2>
+      <p id="audience-reaction" style="white-space:pre-line"></p>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom:14px">PARTICIPANTS</h2>
+      <div id="participants-list" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+
+    <p id="conclusion-text" style="font-size:15px;font-weight:600;color:rgba(224,218,232,.88);margin:0;text-align:center"></p>
+
+    <div style="background:rgba(20,6,38,.35);border:1px dashed rgba(245,212,148,.3);border-radius:14px;padding:20px 24px">
+      <h3 style="font-size:13px;letter-spacing:.1em;margin:0 0 10px;color:rgba(255,214,10,.85);text-transform:uppercase">Sources</h3>
+      <div id="sources-list" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API_BASE = 'http://localhost:5004';
+
+const EDITIONS = ['Love Is Blind (US)','Love Is Blind: Argentina','Casamento às Cegas: Brasil','Love Is Blind: France','Love Is Blind: Germany','Love Is Blind: Habibi','Love Is Blind: Italy','Love Is Blind: Japan','Love Is Blind: Mexico','Love Is Blind: Poland','Love Is Blind: Sweden','Love Is Blind: UK'];
+
+// The API just wants a short token (Poland, UK, US...) for its search queries,
+// not the full display label from the dropdown.
+const EDITION_SHORT_NAMES = {
+  'Love Is Blind (US)': 'US',
+  'Love Is Blind: Argentina': 'Argentina',
+  'Casamento às Cegas: Brasil': 'Brazil',
+  'Love Is Blind: France': 'France',
+  'Love Is Blind: Germany': 'Germany',
+  'Love Is Blind: Habibi': 'Habibi',
+  'Love Is Blind: Italy': 'Italy',
+  'Love Is Blind: Japan': 'Japan',
+  'Love Is Blind: Mexico': 'Mexico',
+  'Love Is Blind: Poland': 'Poland',
+  'Love Is Blind: Sweden': 'Sweden',
+  'Love Is Blind: UK': 'UK'
+};
+
+const editionInput = document.getElementById('lib-edition');
+const editionSuggestions = document.getElementById('edition-suggestions');
+const seasonSelect = document.getElementById('lib-season');
+const episodeInput = document.getElementById('lib-episode');
+const submitBtn = document.getElementById('submit-btn');
+const loadingMsg = document.getElementById('loading-msg');
+const errorMsg = document.getElementById('error-msg');
+const results = document.getElementById('results');
+const progressWrap = document.getElementById('progress-wrap');
+const progressBar = document.getElementById('progress-bar');
+const progressStepLabel = document.getElementById('progress-step-label');
+
+let LIBRARY = {}; // token (e.g. "poland") -> [season numbers], from /api/library
+let availableEditions = EDITIONS;
+let selectedEdition = null; // only set once the user picks a suggestion, not while typing
+
+function populateSeasons(edition) {
+  const token = (EDITION_SHORT_NAMES[edition] || edition).toLowerCase();
+  const seasons = LIBRARY[token] || [1];
+  seasonSelect.innerHTML = '';
+  seasons.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = `Season ${s}`;
+    seasonSelect.appendChild(opt);
+  });
+  seasonSelect.value = seasons[seasons.length - 1]; // default to the latest season available
+  episodeInput.value = 1;
+}
+
+function selectEdition(edition) {
+  selectedEdition = edition;
+  editionInput.value = edition;
+  editionSuggestions.classList.add('hidden');
+  populateSeasons(edition);
+}
+
+function renderSuggestions(query) {
+  const q = query.trim().toLowerCase();
+  const matches = q ? availableEditions.filter(ed => ed.toLowerCase().includes(q)) : availableEditions;
+
+  editionSuggestions.innerHTML = '';
+  if (!matches.length) {
+    editionSuggestions.classList.add('hidden');
+    return;
+  }
+  matches.forEach(ed => {
+    const opt = document.createElement('div');
+    opt.textContent = ed;
+    opt.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:15px';
+    opt.addEventListener('mouseenter', () => opt.style.background = 'rgba(255,214,10,.18)');
+    opt.addEventListener('mouseleave', () => opt.style.background = 'transparent');
+    // mousedown (not click) fires before the input's blur, so the suggestion
+    // is still in the DOM to be read when selectEdition runs.
+    opt.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      selectEdition(ed);
+    });
+    editionSuggestions.appendChild(opt);
+  });
+  editionSuggestions.classList.remove('hidden');
+}
+
+editionInput.addEventListener('input', () => {
+  selectedEdition = null; // typing invalidates any prior selection until picked again
+  renderSuggestions(editionInput.value);
+});
+editionInput.addEventListener('focus', () => renderSuggestions(editionInput.value));
+editionInput.addEventListener('blur', () => editionSuggestions.classList.add('hidden'));
+
+async function loadLibrary() {
+  try {
+    const response = await fetch(`${API_BASE}/api/library`);
+    LIBRARY = await response.json();
+  } catch (err) {
+    LIBRARY = {}; // fall back to a bare Season 1 option per edition
+  }
+
+  const editionsWithIndex = EDITIONS.filter(ed => LIBRARY[(EDITION_SHORT_NAMES[ed] || ed).toLowerCase()]);
+  availableEditions = editionsWithIndex.length ? editionsWithIndex : EDITIONS;
+}
+
+loadLibrary();
+
+function renderRecap(data, episode) {
+  document.getElementById('phase-label').textContent = `PHASE: ${(data.phase || 'unknown').toUpperCase()}`;
+  document.getElementById('intro-text').textContent = data.intro;
+  document.getElementById('main-drama').textContent = data.mainDrama;
+  document.getElementById('highlights-header').textContent = `HIGHLIGHTS OF THE LAST EPISODE (${data.episodeLabel})`;
+
+  const highlightsList = document.getElementById('highlights-list');
+  highlightsList.innerHTML = '';
+  data.highlights.forEach(beat => {
+    const p = document.createElement('p');
+    p.style.cssText = 'font-size:15px;line-height:1.7;color:rgba(224,218,232,.88);margin:0;padding-left:16px;border-left:2px solid rgba(255,214,10,.5)';
+    p.textContent = beat;
+    highlightsList.appendChild(p);
+  });
+
+  document.getElementById('audience-reaction').textContent = data.audienceReaction;
+
+  const participantsList = document.getElementById('participants-list');
+  participantsList.innerHTML = '';
+  data.participants.forEach(person => {
+    const div = document.createElement('div');
+    div.style.cssText = 'font-size:15px;color:#fff;font-weight:600';
+    div.innerHTML = `${person.name} <span style="color:rgba(255,255,255,.75);font-weight:400">(${person.age}, ${person.occupation})</span>`;
+    participantsList.appendChild(div);
+  });
+
+  document.getElementById('conclusion-text').textContent = data.conclusion;
+
+  const sourcesList = document.getElementById('sources-list');
+  sourcesList.innerHTML = '';
+  data.sources.forEach(src => {
+    const a = document.createElement('a');
+    a.href = src.url;
+    a.target = '_blank';
+    a.style.cssText = 'font-size:14px;line-height:1.6;color:#ffd60a;text-decoration:underline';
+    a.textContent = src.title;
+    sourcesList.appendChild(a);
+  });
+
+  results.classList.remove('hidden');
+  results.style.display = 'flex';
+}
+
+function updateProgress(stepIndex, totalSteps, stepLabel) {
+  const pct = totalSteps ? Math.min(100, Math.round((stepIndex / totalSteps) * 100)) : 0;
+  progressBar.style.width = `${pct}%`;
+  progressStepLabel.textContent = stepLabel || '';
+}
+
+// Polls /api/recap/status until the background job finishes, so the browser
+// never holds one open request for the full 30-90s pipeline run. Resolves
+// with the reshaped recap payload, or throws on error/timeout.
+async function pollJob(jobId) {
+  const POLL_INTERVAL_MS = 900;
+  const MAX_POLLS = 200; // ~3 minutes ceiling, well above a normal run
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    const response = await fetch(`${API_BASE}/api/recap/status/${jobId}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Lost track of that recap job.');
+    }
+    updateProgress(data.stepIndex, data.totalSteps, data.stepLabel);
+    if (data.status === 'done') return data.result;
+    if (data.status === 'error') throw new Error(data.error || 'Something went wrong generating the recap.');
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+  throw new Error('This is taking way too long, something might be stuck.');
+}
+
+submitBtn.addEventListener('click', async () => {
+  results.classList.add('hidden');
+  errorMsg.classList.add('hidden');
+  updateProgress(0, 1, '');
+
+  if (!selectedEdition) {
+    errorMsg.textContent = "Select a Love is Blind Edition or I won't find the drama!";
+    errorMsg.classList.remove('hidden');
+    return;
+  }
+
+  const edition = selectedEdition;
+  const season = parseInt(seasonSelect.value, 10);
+  const episode = Math.max(1, Math.min(12, parseInt(episodeInput.value || '1', 10)));
+  const shortEdition = EDITION_SHORT_NAMES[edition] || edition;
+
+  loadingMsg.classList.remove('hidden');
+  progressWrap.classList.remove('hidden');
+  submitBtn.disabled = true;
+submitBtn.textContent = 'SPILLING THE TEA...';
+
+  const params = new URLSearchParams({ edition: shortEdition, season, episode });
+
+  try {
+    const startResponse = await fetch(`${API_BASE}/api/recap/start?${params}`, { method: 'POST' });
+    const startData = await startResponse.json();
+    if (!startResponse.ok) {
+      throw new Error(startData.error || 'Could not start the recap job.');
+    }
+    const data = await pollJob(startData.job_id);
+    renderRecap(data, episode);
+  } catch (err) {
+    errorMsg.textContent = `Something broke: ${err.message || 'Could not reach the recap server. Is app.py running?'}`;
+    errorMsg.classList.remove('hidden');
+  } finally {
+    loadingMsg.classList.add('hidden');
+    progressWrap.classList.add('hidden');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'SPILL THE TEA';
+  }
+});
+</script>
+
+</body>
+</html>

@@ -46,7 +46,7 @@ FRANCHISE_TERMS = ["love is blind", "casamento às cegas", "casamento as cegas"]
 MAX_PLAUSIBLE_EPISODE = 20  # reality show seasons don't run this long; guards against
                              # matching a year (e.g. IMDb's "TV Episode 2026") as an episode number
 
-# season_indexes/ lives one level up in main/, shared across all pipeline versions
-SEASON_INDEX_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "season_indexes")
+# season_indexes/ lives alongside this file at the repo root
+SEASON_INDEX_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_indexes")
 EPISODE_INDEX_DIR = os.path.join(SEASON_INDEX_DIR, "episodes")
 CAST_INDEX_DIR = os.path.join(SEASON_INDEX_DIR, "cast")
