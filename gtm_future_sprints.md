@@ -1,8 +1,7 @@
 # Future GTM Sprints
 
-These are the next sprints after this MVP, aimed at go-to-market — not a
-feature backlog. The MVP proves the core product (autonomous,
-spoiler-bounded, on-tone recap generation); these sprints are about
+These are the next sprints after this MVP or MLP (Minimum Loveable Product), aimed at go-to-market — not a
+feature backlog. The MLP proves the core product (autonomous, spoiler-bounded, on-tone recap generation); these sprints are about
 getting it in front of real users and finding out if they'll come back for
 it unprompted.
 
@@ -71,15 +70,69 @@ audience.
 - **Channel/motion**: In-product upsell only (no separate paid
   acquisition channel yet) — free core product stays free, paid features
   are additive, not a paywall on the thing that got people in the door.
-- **Key deliverable**: Paid tier shipping scheduled/email delivery (recap
-  waiting for you the morning after an episode airs, no need to
-  re-request it), social sharing (shareable recap cards), and interactive
-  features (tagging friends into a recap, couple predictions/voting).
+- **Key deliverable**: Paid tier shipping three concrete features:
+  - **Share-with-a-friend program**: send a generated recap directly to a
+    friend (who's watching the same show, possibly at a different episode)
+    instead of only viewing it yourself — the natural distribution loop for
+    a show people watch and text each other about in real time.
+  - **Email this to yourself**: scheduled/on-demand delivery of a recap to
+    your own inbox, so it's waiting for you the morning after an episode
+    airs, no need to re-request it.
+  - **Vote for who's most likely to get married**: a lightweight prediction
+    game per season, one vote per user per couple, results revealed at the
+    Wedding phase — pure engagement/retention feature, no bearing on the
+    recap content itself.
   Free tier stays exactly what the MVP already does: on-demand recap
   generation.
 - **Success metric**: Free-to-paid conversion rate on the cohort of users
   who've generated ≥2 free recaps, plus paid-tier retention (still
   subscribed/active after one full season).
+
+---
+
+## Product roadmap: true "After the Show" status feature
+
+Not a GTM sprint — a genuine product feature deliberately scoped out of
+the current MVP, worth documenting here because it's a different kind of
+build than anything shipped so far and shapes what a later sprint (e.g.
+around Sprint 3's paid tier) could offer.
+
+**What's built today**: the recap pipeline supports an `"After the Altar"`
+phase — later, still episode-numbered installments (e.g. "After the Altar:
+...") that air after a season's Reunion special. These are treated like
+any other phase: bound to the user's episode cutoff, fully spoiler-checked,
+folded into the normal `main_drama`/`highlights` recap shape. (Renamed from
+an earlier, ambiguous `"After the show"` label to free that name up for
+the feature below — see `config.py`.)
+
+**What's not built**: a true "as of today" status feature — "where are the
+couples from this season now?" — answerable at any time, independent of
+which episode the user has watched. This is a meaningfully different
+feature, not an extension of the existing phase logic:
+
+- **No episode cutoff, no spoiler check the way every other phase works.**
+  The entire current pipeline is built around "don't reveal past episode
+  N" — this feature is the opposite, it's explicitly about revealing
+  present-day status regardless of episode progress.
+- **Different output shape.** No `main_drama`, no `highlights`, no
+  episode-anchored fields at all — instead something like: per-couple
+  current status (together / broken up / other), with sourced, dated
+  claims (a status is only as good as how recently it was reported).
+  Same narrator voice, entirely different schema.
+- **Different sourcing need.** Requires current, dated sources (recent
+  interviews, social media, tabloid coverage), not the show's own episode
+  content — closer to an ongoing news-monitoring problem than a one-time
+  RAG index built from a fixed set of episodes.
+- **Different trigger model.** Doesn't make sense as "trigger once per
+  episode watched" — more naturally a standing query a user can re-run any
+  time ("what's the latest on X and Y?"), which also means it ages: an
+  answer from today may be wrong in a month, unlike the rest of the recap
+  which is permanently correct once generated.
+
+Scoping this as its own future sprint rather than folding it into the
+current phase logic, given how much of the existing architecture (cutoff
+filtering, spoiler-check, phase-based retrieval) simply doesn't apply to
+it.
 
 ---
 

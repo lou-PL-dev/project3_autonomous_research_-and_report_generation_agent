@@ -37,9 +37,12 @@ UPSERT_BATCH_SIZE = 200
 
 # Order matters: retrieval.py slices this list up to the current phase's index
 # to build "strictly before" filters, so entries must stay in chronological order.
-# "After the show" (e.g. "After the Altar") only exists for some seasons and
-# always airs after the Reunion special, hence last.
-PHASES = ["Pods", "Honeymoon", "Moving In Together", "Wedding", "Reunion", "After the show"]
+# "After the Altar" only exists for some seasons and always airs after the
+# Reunion special, hence last. Deliberately not named "After the show": that
+# name is reserved for a future, separate feature (an unbounded "where are
+# the couples today" status query, not tied to an episode cutoff at all) —
+# see gtm_future_sprints.md.
+PHASES = ["Pods", "Honeymoon", "Moving In Together", "Wedding", "Reunion", "After the Altar"]
 
 GENERAL_DOMAINS = ["wikipedia.org", "themoviedb.org", "rottentomatoes.com", "imdb.com", "netflix.com"]
 NOISE_DOMAINS = ["tiktok.com", "spotify.com"]

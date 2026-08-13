@@ -31,6 +31,10 @@ Only flag a claim that states or clearly implies a SPECIFIC fact confirmed to ha
 episode {episode + 1} or later, e.g. naming a wedding outcome before the Wedding phase, or
 revealing pod pairings before the reveal.
 
+Also check each entry in "participants": a name with more than two tokens (first name + two
+or more additional surname-looking tokens) can indicate a married/changed surname adopted
+after this point in the season, which would spoil a wedding outcome. Flag it if so.
+
 CONCLUSION FIELD RULE: the "conclusion" field is deliberately written as a vague, generic
 teaser ("can't wait to see what happens next", "as they prepare for what's ahead"). This is
 intentional and REQUIRED by design, not a leak. Only flag the conclusion if it states a

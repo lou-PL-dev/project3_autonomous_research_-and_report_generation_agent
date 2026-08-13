@@ -123,9 +123,25 @@ nothing from it at all.
     # when TMDB had the correct disambiguated name sitting right there.
     # Age/profession only ever come from the cast CSV, never TMDB's role field,
     # "Self - Contestant" is not real profession data.
+    def safe_name(name: str) -> str:
+        # Structural spoiler guard: before the season has plausibly had a
+        # wedding (Wedding/Reunion/After the Altar), cap a name at first name +
+        # one surname. A married/compound surname is the concrete way a name
+        # leaks a wedding outcome — confirmed case: a cast bio using a
+        # post-show married name reached the draft by the model copying it
+        # straight out of retrieved context, before the TMDB merge below ever
+        # ran, so this has to guard every name-assignment site, not just the
+        # merge's own override step.
+        if phase in ("Wedding", "Reunion", "After the Altar"):
+            return name
+        tokens = name.split()
+        return " ".join(tokens[:2]) if len(tokens) > 2 else name
+
     cast_lookup = load_cast_lookup(edition, season)
     current_ep_tmdb = state.get("tmdb_participants", {}).get(episode, [])
     participants = draft.setdefault("participants", [])
+    for p in participants:
+        p["name"] = safe_name(p["name"])
 
     def find_match_index(tmdb_name: str) -> Optional[int]:
         tmdb_lower = tmdb_name.lower()
@@ -156,7 +172,7 @@ nothing from it at all.
         return candidates[0] if len(candidates) == 1 else {}
 
     for person in current_ep_tmdb:
-        tmdb_name = person["name"]
+        tmdb_name = safe_name(person["name"])
         is_host = "host" in person.get("role", "").lower()
         info = find_cast_info(tmdb_name)
         match_idx = find_match_index(tmdb_name)
