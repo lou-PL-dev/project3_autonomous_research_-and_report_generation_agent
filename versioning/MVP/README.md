@@ -1,9 +1,16 @@
-# Previously On: Love Is Blind
+# Previously On: Love Is Blind — V0 (MVP)
+
+> **Archived version.** This is the original Day-1 MVP, preserved as-is for
+> history. For the current, submitted version of the project, see the
+> [repo root README](../../README.md). The full current-state plan is at
+> [`project_plan/planning.md`](../../project_plan/planning.md); this
+> version's original planning doc is the sibling
+> [`planning.md`](./planning.md) in this same folder.
 
 Autonomous, spoiler-bounded recap generator for Love Is Blind. Tell it your edition, season, and last episode watched, get back a narrator-voiced recap covering the season so far, without spoiling anything past your cutoff.
 
-Full plan: [`project_plan/planning.md`](./project_plan/planning.md)
-MVP: [`MVP/`](./MVP) — start with [`MVP/summary.py`](./MVP/summary.py) (CLI) or [`MVP/recap_ui.html`](./MVP/recap_ui.html) (UI)
+Full original plan: [`planning.md`](./planning.md)
+This version's code: [`summary.py`](./summary.py) (CLI) or [`recap_ui.html`](./recap_ui.html) (UI)
 
 ## Current state: V0 (MVP)
 
@@ -25,11 +32,11 @@ Proves the core question: can a good, on-tone, spoiler-bounded recap be generate
 ## Setup
 
 ```bash
-cd MVP
+cd versioning/MVP
 pip install python-dotenv openai tavily-python flask flask-cors
 ```
 
-Create a `.env` file in the project root with:
+Create a `.env` file in the repo root with:
 ```
 OPENAI_API_KEY=...
 TAVILY_API_KEY=...
@@ -39,7 +46,7 @@ TAVILY_API_KEY=...
 
 **Option A: command line**
 ```bash
-python MVP/summary.py --episode 6
+python versioning/MVP/summary.py --episode 6
 ```
 Optional flags: `--edition Poland` (default), `--season 1` (default).
 
@@ -47,11 +54,11 @@ Optional flags: `--edition Poland` (default), `--season 1` (default).
 
 Terminal 1, start the backend:
 ```bash
-python MVP/app.py
+python versioning/MVP/app.py
 ```
 Terminal 2, open the page:
 ```bash
-open MVP/recap_ui.html
+open versioning/MVP/recap_ui.html
 ```
 Pick an edition, season, and last episode watched, then click "SPILL THE TEA." A real generation takes 30 to 90 seconds (multiple live searches plus an LLM call).
 
@@ -62,13 +69,13 @@ Pick an edition, season, and last episode watched, then click "SPILL THE TEA." A
 - Name spelling and specific claims can vary slightly between runs on live search, since results aren't cached or pinned.
 - Debug logs (`debug_context_episode_N.txt`) are written to the working directory on each CLI run for manual grounding checks, not meant to be committed.
 
-## Repo structure
+## Folder structure (this version)
 
 ```
-MVP/
+versioning/MVP/
   summary.py        # core pipeline: fetch sources, generate recap (CLI entry point)
   app.py             # Flask API wrapping summary.py for the web UI
   recap_ui.html       # standalone frontend, calls app.py
-project_plan/
-  planning.md         # full use case, tech stack, MVP scope, risks, versioning, timeline
+  planning.md          # this version's original use case, tech stack, MVP scope, risks, timeline
+  README.md             # this file
 ```

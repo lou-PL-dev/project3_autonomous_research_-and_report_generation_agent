@@ -35,7 +35,11 @@ CATEGORY_BUDGETS = {"bios": 3, "highlights": 4, "drama": 4, "reaction": 3}
 TAG_BATCH_SIZE = 30
 UPSERT_BATCH_SIZE = 200
 
-PHASES = ["Pods", "Honeymoon", "Moving In Together", "Wedding", "Reunion"]
+# Order matters: retrieval.py slices this list up to the current phase's index
+# to build "strictly before" filters, so entries must stay in chronological order.
+# "After the show" (e.g. "After the Altar") only exists for some seasons and
+# always airs after the Reunion special, hence last.
+PHASES = ["Pods", "Honeymoon", "Moving In Together", "Wedding", "Reunion", "After the show"]
 
 GENERAL_DOMAINS = ["wikipedia.org", "themoviedb.org", "rottentomatoes.com", "imdb.com", "netflix.com"]
 NOISE_DOMAINS = ["tiktok.com", "spotify.com"]

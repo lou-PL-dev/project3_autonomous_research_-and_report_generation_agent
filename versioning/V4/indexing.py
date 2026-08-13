@@ -81,6 +81,9 @@ For each chunk, determine:
   - Moving In Together: shared apartment, meeting family or friends.
   - Wedding: dress/suit fittings, vows, the ceremony itself.
   - Reunion: a separate post-finale special, cast answering questions about now.
+  - After the show: a LATER catch-up episode airing after the Reunion special (e.g.
+    "After the Altar"), following couples' lives some time after the weddings/decisions —
+    not the Reunion special itself, and not a flashback to an earlier phase.
   A chunk covering a later episode range may still narrate a FLASHBACK to an earlier moment,
   tag the phase for what's actually described, not wherever the episode range would sit.
   If unclear, use null.

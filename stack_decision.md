@@ -14,7 +14,7 @@ workflow's shape.
    episode. That's enforced with a dedicated `spoiler_check` node that
    audits the drafted output and, on failure, routes back to `generate`
    for another attempt rather than shipping a flawed draft
-   ([`graph.py`](main/V4/graph.py)). This is exactly the case LangGraph is
+   ([`graph.py`](graph.py)). This is exactly the case LangGraph is
    built for — real branching logic driven by the content of the state,
    not a fixed pipeline with optional retries bolted on. n8n's branching
    (IF/Switch nodes) is aimed at routing between different external
@@ -31,7 +31,7 @@ workflow's shape.
 
 3. **A real ReAct loop, not scripted API calls.** The research-planning
    node uses `langgraph.prebuilt.create_react_agent`
-   ([`research.py`](main/V4/research.py)) — the agent decides its own
+   ([`research.py`](research.py)) — the agent decides its own
    search queries based on what it's already found, rather than following
    a fixed call sequence. This reason-act loop is native to
    LangChain/LangGraph's tool-calling model; replicating it in n8n would
@@ -56,7 +56,7 @@ workflow's shape.
 
 The brief allows n8n as a thin optional trigger/webhook layer in front of
 a LangGraph brain. This project's original plan (see
-[`MVP/planning.md`](MVP/planning.md) §2) assumed n8n would be used this
+[`versioning/MVP/planning.md`](versioning/MVP/planning.md) §2) assumed n8n would be used this
 way — a webhook triggering an Execute Command node that runs the Python
 pipeline, mainly for visual run history and a free HTTP endpoint. In
 practice this was dropped for V1 onward, for three reasons:

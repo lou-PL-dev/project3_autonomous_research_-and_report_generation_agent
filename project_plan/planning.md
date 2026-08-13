@@ -1,8 +1,8 @@
 # Project Plan — Current State (V4)
 
-> This is the live project plan, current as of V4. The original Day-1 plan
+> This is the live project plan, current as of last version in root folder. The original Day-1 plan
 > (use case, initial stack reasoning, MVP scope, risk table as first drafted)
-> is preserved unchanged at [`MVP/planning.md`](../MVP/planning.md) for
+> is preserved unchanged at [`versioning/MVP/planning.md`](../versioning/MVP/planning.md) for
 > history. This document reflects what was actually built and decided along
 > the way; where a decision changed from the original plan, that's called
 > out explicitly rather than silently rewritten.
@@ -34,7 +34,7 @@ plot facts, and coverage of a specific unscripted franchise Prime doesn't
 serve this way.
 
 Full original problem statement, user story, and acceptance criteria:
-see [`MVP/planning.md`](../MVP/planning.md) §1 — unchanged.
+see [`versioning/MVP/planning.md`](../versioning/MVP/planning.md) §1 — unchanged.
 
 ## 2. Technology Stack — as built
 
@@ -43,14 +43,14 @@ see [`MVP/planning.md`](../MVP/planning.md) §1 — unchanged.
 **Stack in production (V4)**:
 - **Core LLM**: OpenAI (`gpt-4o` for generation/fan-reaction synthesis,
   `gpt-4o-mini` for research planning, chunk tagging, spoiler audit — split
-  by task cost-sensitivity, see [`config.py`](../main/V4/config.py)).
+  by task cost-sensitivity, see [`config.py`](../config.py)).
 - **Agent orchestration**: LangGraph `StateGraph` with 10 nodes and one
   conditional edge (spoiler-check retry loop). See
-  [`graph.py`](../main/V4/graph.py).
+  [`graph.py`](../graph.py).
 - **Tool-use pattern**: ReAct, via `langgraph.prebuilt.create_react_agent`,
   in the research-planning node — the agent decides its own search queries
   rather than following a fixed query template. See
-  [`research.py`](../main/V4/research.py).
+  [`research.py`](../research.py).
 - **RAG**: Pinecone. Chunks tagged `{edition, season, episode_number,
   phase}`; retrieval filtered by `edition = user's edition AND season =
   user's season AND episode_number ≤ cutoff`. This is the mechanism that
@@ -84,12 +84,12 @@ see [`MVP/planning.md`](../MVP/planning.md) §1 — unchanged.
 
 **Alternatives considered and dropped**: unchanged from the original plan
 (Reddit API, Rotten Tomatoes API, OMDb-as-redundant, direct scraping,
-dedicated translation API) — see [`MVP/planning.md`](../MVP/planning.md) §2.
+dedicated translation API) — see [`versioning/MVP/planning.md`](../versioning/MVP/planning.md) §2.
 
 ## 3. Scope — current state vs. original MVP scope
 
 The original MVP scope (single source, one hardcoded edition/season,
-terminal-only output) is superseded. Current (V4) scope:
+terminal-only output) is superseded. Current scope:
 
 - Multi-source: Tavily search + TMDB + OMDb + YouTube comments, merged via
   source-first RAG with per-category budgets (bios/highlights/drama/reaction).
@@ -115,17 +115,43 @@ delivery, social sharing, interactive features (tagging, predictions/voting)
 
 ## 4. Risk Assessment
 
-Original risk table (technical, data, legal/copyright, business/scope) is
-unchanged and still the operative one — see
-[`MVP/planning.md`](../MVP/planning.md) §4. One risk has moved from
-theoretical to live and is tracked as a business decision rather than a
-mitigation: **Netflix/Love Is Blind IP exposure**. Current position: treat
-a cease-and-desist as a validation signal rather than a pure downside (see
-Prime Video's own X-Ray/recap feature as precedent that this content
-category is viable), with acquisition or a hiring conversation with
-Netflix as one possible exit path rather than a worst case to design
+Unchanged from the original plan (first drafted at
+[`versioning/MVP/planning.md`](../versioning/MVP/planning.md) §4) and still
+the operative table — reproduced here in full so this document is readable
+on its own:
+
+| Category | Risk | Probability | Impact | Mitigation |
+|---|---|---|---|---|
+| Technical | LLM hallucinates plot details not in sources | Medium | High | Ground generation strictly in retrieved content, spoiler check and fact check pass in V3 |
+| Technical | Structured output schema breaks | Medium | Medium | Validate output against schema, retry on failure |
+| Technical | API rate limits hit mid run | Low to Medium | Medium | Cache results per episode, monitor quota usage |
+| Data | Recap content sparse for less mainstream editions | Medium | Medium | Confirmed V1 scope is US only, revisit before expanding |
+| Data | Sources conflict on details | Medium | Low to Medium | Generation prompt instructed to reconcile/flag, not silently pick one |
+| Data | Phase tagging inference errors (wrong episode assigned to wrong phase) | Medium | Medium | Spoiler check step also validates phase boundaries before output |
+| Legal/Copyright | Reproducing transcript or article text verbatim | Medium | Medium | Summarize/paraphrase only, never quote at length |
+| Legal/Copyright | YouTube ToS on API use | Low | Medium | Official API endpoints only, respect quota and terms |
+| Legal/Copyright | Netflix/Love Is Blind trademark and IP exposure (franchise name, branding, imagery) | Medium | Medium | Frame as non-commercial personal/fan project, avoid reproducing official Netflix imagery or logos, text-only branding references |
+| Business/Scope | Scope creep (chatbot, extra sources) eating into core requirement time | High | High | Must-haves locked per version table, could-items only after musts pass |
+| Business/Scope | Spoiler boundary failing breaks the core value proposition | Medium | High | Dedicated LangGraph spoiler-check node, not just a prompt instruction |
+| Business | Recap not distinct/funny enough to be worth using vs. existing YouTube recaps | Medium | High | Early friend test on Day 3 validates this before further infra investment |
+
+**Status update, current as of V4**: one risk has moved from theoretical to
+live and is now tracked as a business decision rather than a pure
+mitigation item — **Netflix/Love Is Blind IP exposure**. Current position:
+treat a cease-and-desist as a validation signal rather than a pure
+downside (see Prime Video's own X-Ray/recap feature as precedent that this
+content category is viable), with acquisition or a hiring conversation
+with Netflix as one possible exit path rather than a worst case to design
 purely defensively around. Full detail in
 [`gtm_future_sprints.md`](../gtm_future_sprints.md).
+
+Also worth noting: the spoiler-boundary risk (row above, "spoiler boundary
+failing breaks the core value proposition") is not fully closed by the
+dedicated LangGraph spoiler-check node. Testing against Love Is Blind US
+Season 1 Episode 1 found the node passing a recap that used a
+participant's married surname from the show's finale — a real leak via the
+name field, not the generated prose the node actually audits. Tracked as
+an open follow-up, not yet mitigated.
 
 ## 5. Version history (delivered)
 
